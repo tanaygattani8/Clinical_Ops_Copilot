@@ -1,6 +1,14 @@
 import os
 
-# Google keeps changing which models are on the free tier (gemini-2.0-flash lost it in 2026).
-# Override with the GEMINI_MODEL env var — no code change / redeploy-from-source needed.
-# Current free-tier options: gemini-2.5-flash (10 rpm), gemini-2.5-flash-lite (15 rpm, 1000/day).
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Which LLM provider to use. Groq is the default: free, no credit card, 30 req/min.
+# Set LLM_PROVIDER=gemini to use Gemini natively instead.
+_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+
+if _PROVIDER == "gemini":
+    # Gemini model id string — ADK talks to Gemini natively. Needs GOOGLE_API_KEY.
+    # gemini-2.0-flash lost the free tier in 2026; use a 2.5 model.
+    MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+else:
+    # Groq via ADK's LiteLLM adapter. Needs GROQ_API_KEY and the litellm package.
+    from google.adk.models.lite_llm import LiteLlm
+    MODEL = LiteLlm(model=os.getenv("GROQ_MODEL", "groq/llama-3.3-70b-versatile"))

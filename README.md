@@ -64,7 +64,9 @@ Hugging Face Spaces hosts the Docker container for free and gives a public URL t
 1. Create a free account at [huggingface.co](https://huggingface.co).
 2. **New → Space** → choose **Docker** → **Blank** template. Give it a name.
 3. In the Space, go to **Settings → Variables and secrets → New secret** and add:
-   - `GOOGLE_API_KEY` = your key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+   - `GROQ_API_KEY` = your free key from [console.groq.com/keys](https://console.groq.com/keys)
+
+   (The app defaults to Groq. To use Gemini instead, add a `LLM_PROVIDER=gemini` variable and a `GOOGLE_API_KEY` secret.)
 4. Push this project to the Space's git repo (URL shown on the Space page):
    ```bash
    git init && git add . && git commit -m "Clinic Ops Copilot"
@@ -77,4 +79,4 @@ The container seeds its synthetic DB at startup into `/tmp` (writable, ephemeral
 
 ## Secrets & git
 
-`.env` holds your real key and is **git-ignored** — it never gets pushed. Only `.env.example` (a template with no real values) is committed. On Hugging Face the key comes from the Space **secret** `GOOGLE_API_KEY`, injected as an environment variable — never from a committed file. This satisfies Constitution Rule 7 (no secrets in code).
+`.env` holds your real key and is **git-ignored** — it never gets pushed. Only `.env.example` (a template with no real values) is committed. On Hugging Face the key comes from the Space **secret** `GROQ_API_KEY`, injected as an environment variable — never from a committed file. This satisfies Constitution Rule 7 (no secrets in code).
