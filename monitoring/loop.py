@@ -13,8 +13,12 @@ def _get_connection():
 async def _trigger_agent_run(query: str) -> str:
     """Send a query to the orchestrator agent and get the text response."""
     runner = InMemoryRunner(agent=root_agent)
+    # ADK's run_async does not auto-create sessions; create it first.
+    await runner.session_service.create_session(
+        app_name=runner.app_name, user_id="system_monitor", session_id="monitor_session"
+    )
     user_msg = types.Content(role="user", parts=[types.Part(text=query)])
-    
+
     # Run the orchestrator
     response_text = ""
     async for event in runner.run_async(

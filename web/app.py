@@ -147,6 +147,10 @@ async def chat(request: Request):
     audit_log("web", "chat_request", {"message_snippet": message[:120], "session_id": session_id})
 
     runner = InMemoryRunner(agent=root_agent)
+    # ADK's run_async does not auto-create sessions; create it first.
+    await runner.session_service.create_session(
+        app_name=runner.app_name, user_id="web_user", session_id=session_id
+    )
     user_msg = types.Content(role="user", parts=[types.Part(text=message)])
 
     response_text = ""
