@@ -1,65 +1,112 @@
 import os
+import csv
+import math
 import random
 import datetime
+import tempfile
 import duckdb
+
+
+def _bulk_insert(con, table, rows):
+    """Load rows via a temp CSV + COPY. DuckDB's executemany is per-row and
+    pathologically slow for 100k+ rows; COPY is C-level bulk load."""
+    if not rows:
+        return
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    try:
+        with open(path, "w", newline="") as f:
+            csv.writer(f).writerows(rows)  # date objects -> ISO 'YYYY-MM-DD' via str()
+        con.execute(
+            f"COPY {table} FROM '{path.replace(chr(92), '/')}' "
+            "(FORMAT CSV, HEADER FALSE, DATEFORMAT '%Y-%m-%d')"
+        )
+    finally:
+        os.remove(path)
+
+# Span is env-overridable so the container / tests can shrink it if needed.
+START_DATE = datetime.date(int(os.getenv("SEED_START_YEAR", "2019")), 1, 1)
+END_DATE = datetime.date(int(os.getenv("SEED_END_YEAR", "2025")), 12, 31)
+TOTAL_DAYS = (END_DATE - START_DATE).days + 1
+
+
+def _clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def _clinic_profiles():
+    """Each clinic gets a stable baseline personality (size, busyness, mood)
+    so the 10 clinics aren't statistically identical. Dedicated RNG => order-independent."""
+    rng = random.Random(7)
+    profiles = {}
+    for c in range(1, 11):
+        profiles[f"CLINIC_{c:02d}"] = {
+            "util": rng.uniform(0.66, 0.86),
+            "no_show": rng.uniform(0.09, 0.16),
+            "wait": rng.uniform(11.0, 18.0),
+            "rev": rng.uniform(120.0, 175.0),
+            "sat": rng.uniform(3.8, 4.6),
+            "volume": rng.uniform(0.8, 1.5),
+        }
+    return profiles
+
+
+PROFILES = _clinic_profiles()
+
+
+def _season(date):
+    """Yearly cycle: +1 mid-January (flu season, busy), -1 mid-summer (quiet)."""
+    doy = date.timetuple().tm_yday
+    return math.cos((doy - 15) / 365.0 * 2 * math.pi)
+
+
+def _year_factor(date, rate):
+    """Compounding year-over-year trend (inflation, growth) relative to START."""
+    return (1 + rate) ** (date.year - START_DATE.year)
+
+
+def _covid(date):
+    """Spring–summer 2020 operational shock: fewer visits, more no-shows, lower use."""
+    return datetime.date(2020, 3, 15) <= date <= datetime.date(2020, 6, 30)
+
 
 def create_database(db_path: str) -> None:
     """Creates the DuckDB file and populates all tables with seeded synthetic data."""
-    # Ensure directory exists
     dir_name = os.path.dirname(db_path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
-        
+
     con = duckdb.connect(db_path)
     try:
-        # Create Tables
         con.execute("""
             CREATE TABLE IF NOT EXISTS daily_metrics (
-                date DATE,
-                clinic_id TEXT,
-                metric_name TEXT,
-                metric_value FLOAT
+                date DATE, clinic_id TEXT, metric_name TEXT, metric_value FLOAT
             )
         """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS appointments (
-                appt_id TEXT,
-                date DATE,
-                clinic_id TEXT,
-                provider_id TEXT,
-                status TEXT,
-                wait_minutes INT
+                appt_id TEXT, date DATE, clinic_id TEXT, provider_id TEXT,
+                status TEXT, wait_minutes INT
             )
         """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS staffing (
-                date DATE,
-                clinic_id TEXT,
-                role TEXT,
-                headcount INT,
-                fte FLOAT
+                date DATE, clinic_id TEXT, role TEXT, headcount INT, fte FLOAT
             )
         """)
         con.execute("""
             CREATE TABLE IF NOT EXISTS patient_satisfaction (
-                survey_id TEXT,
-                date DATE,
-                clinic_id TEXT,
-                score FLOAT,
-                category TEXT
+                survey_id TEXT, date DATE, clinic_id TEXT, score FLOAT, category TEXT
             )
         """)
-        
+
         con.execute("BEGIN TRANSACTION")
-        # Clear existing data
         con.execute("DELETE FROM daily_metrics")
         con.execute("DELETE FROM appointments")
         con.execute("DELETE FROM staffing")
         con.execute("DELETE FROM patient_satisfaction")
-        
-        # Set stable random seed
+
         random.seed(42)
-        
         _generate_daily_metrics(con)
         _generate_appointments(con)
         _generate_staffing(con)
@@ -74,112 +121,128 @@ def create_database(db_path: str) -> None:
     finally:
         con.close()
 
+
 def _generate_daily_metrics(con) -> None:
-    start_date = datetime.date(2025, 1, 1)
-    metrics_data = []
-    
-    # 10 clinics, 365 days
-    for day in range(365):
-        current_date = start_date + datetime.timedelta(days=day)
-        weekday = current_date.weekday()  # Monday=0, Tuesday=1, ... Sunday=6
-        
-        for c in range(1, 11):
-            clinic_id = f"CLINIC_{c:02d}"
-            
-            # 1. CLINIC_01: Tuesday utilization consistently 115-125%
-            if clinic_id == "CLINIC_01" and weekday == 1:  # Tuesday is 1 in current_date.weekday()
-                utilization = random.uniform(1.15, 1.25)
+    rows = []
+    for day in range(TOTAL_DAYS):
+        d = START_DATE + datetime.timedelta(days=day)
+        weekday = d.weekday()  # Mon=0 .. Sun=6
+        season = _season(d)
+        covid = _covid(d)
+
+        for cid, p in PROFILES.items():
+            # Utilization: profile baseline + winter surge + slow yearly creep + noise.
+            if cid == "CLINIC_01" and weekday == 1:  # anomaly: Tuesday over-capacity
+                util = random.uniform(1.15, 1.25)
             else:
-                utilization = random.uniform(0.70, 0.90)
-                
-            # 2. CLINIC_03: Monday no_show_rate consistently 38-42%
-            if clinic_id == "CLINIC_03" and weekday == 0:  # Monday is 0
+                util = p["util"] * _year_factor(d, 0.01) + 0.06 * season + random.uniform(-0.05, 0.05)
+                if covid:
+                    util *= 0.55
+                util = _clamp(util, 0.35, 1.08)
+
+            # No-show: baseline + winter/weather bump + noise.
+            if cid == "CLINIC_03" and weekday == 0:  # anomaly: Monday no-shows
                 no_show = random.uniform(0.38, 0.42)
             else:
-                no_show = random.uniform(0.10, 0.18)
-                
-            avg_wait = random.uniform(10.0, 20.0)
-            rev_per_visit = random.uniform(120.0, 180.0)
-            
-            metrics_data.append((current_date, clinic_id, "utilization", utilization))
-            metrics_data.append((current_date, clinic_id, "no_show_rate", no_show))
-            metrics_data.append((current_date, clinic_id, "avg_wait", avg_wait))
-            metrics_data.append((current_date, clinic_id, "revenue_per_visit", rev_per_visit))
-            
-    con.executemany("INSERT INTO daily_metrics VALUES (?, ?, ?, ?)", metrics_data)
+                no_show = p["no_show"] + 0.03 * max(0.0, season) + random.uniform(-0.03, 0.03)
+                if covid:
+                    no_show += 0.12
+                no_show = _clamp(no_show, 0.04, 0.35)
+
+            avg_wait = _clamp(p["wait"] + 3 * season + random.uniform(-3, 3), 5, 40)
+            rev = p["rev"] * _year_factor(d, 0.04) + random.uniform(-8, 8)
+
+            rows.append((d, cid, "utilization", util))
+            rows.append((d, cid, "no_show_rate", no_show))
+            rows.append((d, cid, "avg_wait", avg_wait))
+            rows.append((d, cid, "revenue_per_visit", rev))
+
+    _bulk_insert(con, "daily_metrics", rows)
+
 
 def _generate_appointments(con) -> None:
-    start_date = datetime.date(2025, 1, 1)
     appts = []
-    appt_counter = 1
-    
-    for day in range(365):
-        current_date = start_date + datetime.timedelta(days=day)
-        
-        for c in range(1, 11):
-            clinic_id = f"CLINIC_{c:02d}"
-            # ~12 appointments per clinic per day
-            num_appts = random.randint(8, 16)
+    counter = 1
+    for day in range(TOTAL_DAYS):
+        d = START_DATE + datetime.timedelta(days=day)
+        season = _season(d)
+        covid = _covid(d)
+
+        for cid, p in PROFILES.items():
+            base = 12 * p["volume"] * _year_factor(d, 0.03) * (1 + 0.15 * season)
+            if covid:
+                base *= 0.5
+            # min 6 keeps every clinic-day an aggregate of 5+ (privacy rule).
+            num_appts = max(6, int(random.gauss(base, 2)))
+
+            statuses = (["completed"] * 4 + ["no_show", "cancelled"]) if not covid \
+                else (["completed"] * 2 + ["no_show", "no_show", "cancelled"])
+
             for _ in range(num_appts):
                 provider_id = f"PROVIDER_{random.randint(1, 10):02d}"
-                status = random.choice(["completed", "completed", "completed", "completed", "no_show", "cancelled"])
-                
-                # Baseline avg wait is 15 mins
-                clinic_avg = 15
-                
-                # 3. PROVIDER_07: avg_wait_minutes consistently 20+ above clinic average
-                if provider_id == "PROVIDER_07":
-                    wait_minutes = clinic_avg + random.randint(20, 30)
+                status = random.choice(statuses)
+                if provider_id == "PROVIDER_07":  # anomaly: chronically long waits
+                    wait = 15 + random.randint(20, 30)
                 else:
-                    wait_minutes = max(2, clinic_avg + random.randint(-8, 8))
-                    
-                appts.append((f"APPT_{appt_counter:06d}", current_date, clinic_id, provider_id, status, wait_minutes))
-                appt_counter += 1
-                
-    con.executemany("INSERT INTO appointments VALUES (?, ?, ?, ?, ?, ?)", appts)
+                    wait = max(2, int(15 + 3 * season + random.randint(-8, 8)))
+                appts.append((f"APPT_{counter:07d}", d, cid, provider_id, status, wait))
+                counter += 1
+
+    _bulk_insert(con, "appointments", appts)
+
 
 def _generate_staffing(con) -> None:
-    start_date = datetime.date(2025, 1, 1)
     staff = []
-    
-    for day in range(365):
-        current_date = start_date + datetime.timedelta(days=day)
-        for c in range(1, 11):
-            clinic_id = f"CLINIC_{c:02d}"
-            
-            roles = [("physician", 2, 2.0), ("nurse", 4, 4.0), ("ma", 3, 3.0), ("admin", 2, 2.0)]
-            for role, headcount, fte in roles:
-                # Add slight random variations
+    for day in range(TOTAL_DAYS):
+        d = START_DATE + datetime.timedelta(days=day)
+        for cid, p in PROFILES.items():
+            size = p["volume"]  # bigger clinics carry more staff
+            roles = [
+                ("physician", round(2 * size), 0.0),
+                ("nurse", round(4 * size), 0.0),
+                ("ma", round(3 * size), 0.0),
+                ("admin", max(1, round(2 * size)), 0.0),
+            ]
+            for role, base_hc, _ in roles:
                 var = random.choice([-1, 0, 1]) if role != "physician" else 0
-                hc = max(1, headcount + var)
-                ft = float(hc)
-                staff.append((current_date, clinic_id, role, hc, ft))
-                
-    con.executemany("INSERT INTO staffing VALUES (?, ?, ?, ?, ?)", staff)
+                hc = max(1, base_hc + var)
+                staff.append((d, cid, role, hc, float(hc)))
+
+    _bulk_insert(con, "staffing", staff)
+
 
 def _generate_satisfaction(con) -> None:
-    start_date = datetime.date(2025, 1, 1)
     surveys = []
-    survey_counter = 1
-    
-    for day in range(365):
-        current_date = start_date + datetime.timedelta(days=day)
-        for c in range(1, 11):
-            clinic_id = f"CLINIC_{c:02d}"
-            # ~3 surveys per clinic per day
+    counter = 1
+    for day in range(TOTAL_DAYS):
+        d = START_DATE + datetime.timedelta(days=day)
+        season = _season(d)
+        for cid, p in PROFILES.items():
+            # CLINIC_05 runs chronically lower (anomaly); winter (busy) dips everyone slightly.
+            mean = (3.3 if cid == "CLINIC_05" else p["sat"]) - 0.08 * season
             for _ in range(random.randint(1, 4)):
                 category = random.choice(["overall", "wait_time", "provider", "facility"])
-                
-                # 4. CLINIC_05: afternoon slot utilization below 70%
-                # In satisfaction, overall score for clinic 5 might be slightly lower due to waits or other issues
-                score = random.uniform(3.5, 4.9) if clinic_id != "CLINIC_05" else random.uniform(2.8, 4.0)
-                
-                surveys.append((f"SRV_{survey_counter:06d}", current_date, clinic_id, round(score, 1), category))
-                survey_counter += 1
-                
-    con.executemany("INSERT INTO patient_satisfaction VALUES (?, ?, ?, ?, ?)", surveys)
+                score = round(_clamp(random.gauss(mean, 0.4), 1.0, 5.0), 1)
+                surveys.append((f"SRV_{counter:07d}", d, cid, score, category))
+                counter += 1
+
+    _bulk_insert(con, "patient_satisfaction", surveys)
+
 
 if __name__ == "__main__":
     db_path = os.getenv("CLINIC_DB_PATH", "data/clinic.duckdb")
     create_database(db_path)
-    print(f"Database created and seeded successfully at {db_path}.")
+
+    # Self-check: span + seeded anomalies must survive generation.
+    con = duckdb.connect(db_path, read_only=True)
+    yrs = con.execute("SELECT MIN(date), MAX(date), COUNT(*) FROM daily_metrics").fetchone()
+    c01 = con.execute("SELECT MAX(metric_value) FROM daily_metrics "
+                      "WHERE clinic_id='CLINIC_01' AND metric_name='utilization'").fetchone()[0]
+    c03 = con.execute("SELECT MAX(metric_value) FROM daily_metrics "
+                      "WHERE clinic_id='CLINIC_03' AND metric_name='no_show_rate'").fetchone()[0]
+    con.close()
+    assert yrs[0].year == START_DATE.year and yrs[1].year == END_DATE.year, "date span wrong"
+    assert c01 > 1.10, "CLINIC_01 over-utilization anomaly missing"
+    assert c03 > 0.30, "CLINIC_03 no-show anomaly missing"
+    print(f"Seeded {yrs[2]:,} daily_metrics rows spanning {yrs[0]}..{yrs[1]} at {db_path}.")
+    print(f"Anomalies OK: CLINIC_01 peak util {c01:.2f}, CLINIC_03 peak no-show {c03:.2f}.")
