@@ -7,6 +7,7 @@ from agents._audit import audit_log, read_audit_log
 from agents.guardrail import guardrail_check
 from tools.groundedness import check_groundedness
 from rag.brief_history import retrieve_latest, retrieve_by_date, store_brief
+from mcp_servers import simulation_engine
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
@@ -145,6 +146,39 @@ async def clinic_satisfaction(clinic: str, start: str = _DEFAULT_START, end: str
         return JSONResponse([{"category": r[0], "score": round(r[1], 2), "n": r[2]} for r in rows])
     finally:
         con.close()
+
+
+_SIM_PROJECTORS = {
+    "staffing": lambda baseline, p: simulation_engine.project_staffing(
+        baseline, p.get("role", "physician"), int(p.get("delta", 0)), int(p.get("horizon_days", 30))),
+    "schedule": lambda baseline, p: simulation_engine.project_schedule(
+        baseline, int(p.get("slot_duration_minutes", 20)), int(p.get("slots_per_day", 24)), int(p.get("horizon_days", 30))),
+    "noshow": lambda baseline, p: simulation_engine.project_noshow(
+        baseline, p.get("intervention", "sms_reminders"), float(p.get("expected_reduction_pct", 0.15)), int(p.get("horizon_days", 30))),
+}
+
+
+@app.post("/api/simulate")
+async def simulate(request: Request):
+    body = await request.json()
+    clinic = body.get("clinic", "")
+    scenario = body.get("scenario", "")
+    params = body.get("params", {})
+
+    if scenario not in _SIM_PROJECTORS:  # whitelist: scenario picks the projector to run
+        return JSONResponse({"error": "scenario must be one of: staffing, schedule, noshow"}, status_code=400)
+
+    con = _con()
+    try:
+        baseline = simulation_engine._load_baseline(con, clinic)
+        projected = _SIM_PROJECTORS[scenario](baseline, params)
+    except Exception as e:
+        return JSONResponse({"error": f"simulation failed ({type(e).__name__}): {e}"}, status_code=400)
+    finally:
+        con.close()
+
+    audit_log("web", "simulation_run", {"clinic": clinic, "scenario": scenario, "params": params})
+    return JSONResponse({"clinic": clinic, "scenario": scenario, "baseline": baseline, "projected": projected})
 
 
 # ── Agent-powered endpoints ──

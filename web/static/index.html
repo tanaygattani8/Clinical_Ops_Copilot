@@ -103,6 +103,7 @@
       <a data-tab="dashboard" class="active">📊<span>Dashboard</span></a>
       <a data-tab="brief">📄<span>Executive brief</span></a>
       <a data-tab="assistant">💬<span>Assistant</span></a>
+      <a data-tab="simulator">🧪<span>Simulator</span></a>
       <a data-tab="audit">🛡<span>Audit log</span></a>
     </nav>
     <div class="foot">Synthetic data · no real patient records</div>
@@ -158,6 +159,25 @@
         </div>
       </section>
 
+      <!-- SIMULATOR -->
+      <section id="view-simulator" class="view">
+        <div class="panel">
+          <h3>What-if scenario</h3>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+            <select id="simClinic"></select>
+            <select id="simScenario" onchange="renderSimParams()">
+              <option value="staffing">Staffing change</option>
+              <option value="schedule">Schedule change</option>
+              <option value="noshow">No-show intervention</option>
+            </select>
+            <span id="simParams" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></span>
+            <button class="btn" id="simRunBtn" onclick="runSimulation()">Run simulation</button>
+          </div>
+          <div class="muted" style="font-size:12px">Deterministic projection model — no LLM call, results are instant and free.</div>
+        </div>
+        <div id="simResults" style="margin-top:16px"></div>
+      </section>
+
       <!-- AUDIT -->
       <section id="view-audit" class="view">
         <table><thead><tr><th>Time (UTC)</th><th>Agent</th><th>Action</th></tr></thead><tbody id="auditRows"></tbody></table>
@@ -171,6 +191,7 @@ const TITLES = {
   dashboard:["Operations dashboard","Key metrics across all clinics"],
   brief:["Executive brief","Board-ready summary with projections"],
   assistant:["Assistant","Ask the operations copilot"],
+  simulator:["What-if simulator","Projected impact of operational changes"],
   audit:["Audit log","Every agent action, logged for compliance"]
 };
 let charts = {};
@@ -216,6 +237,7 @@ document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>{
   document.getElementById('viewSub').textContent=TITLES[t][1];
   if(t==='brief') loadBriefs();
   if(t==='audit') loadAudit();
+  if(t==='simulator') loadSimulator();
 });
 
 function reload(){ loadDashboard(); }
@@ -428,6 +450,85 @@ async function loadAudit(){
   document.getElementById('auditRows').innerHTML = rows.length
     ? rows.reverse().map(r=>`<tr><td>${(r.timestamp||'').replace('T',' ').slice(0,19)}</td><td>${r.agent}</td><td>${r.action}</td></tr>`).join('')
     : '<tr><td colspan="3" class="empty">No audit entries yet.</td></tr>';
+}
+
+let _simInit=false;
+function loadSimulator(){
+  if(_simInit) return; _simInit=true;
+  const csel=document.getElementById('simClinic');
+  for(let c=1;c<=10;c++){ const id=`CLINIC_${String(c).padStart(2,'0')}`; csel.appendChild(new Option(id,id)); }
+  renderSimParams();
+}
+function renderSimParams(){
+  const s=document.getElementById('simScenario').value;
+  const box=document.getElementById('simParams');
+  if(s==='staffing'){
+    box.innerHTML=`
+      <select id="p_role"><option value="physician">Physician</option><option value="nurse">Nurse</option><option value="ma">MA</option><option value="admin">Admin</option></select>
+      <span class="muted" style="font-size:12px">Staff change</span>
+      <input type="range" id="p_delta" min="-3" max="3" step="1" value="1" oninput="document.getElementById('p_deltaVal').textContent=this.value">
+      <span id="p_deltaVal">1</span>`;
+  } else if(s==='schedule'){
+    box.innerHTML=`
+      <span class="muted" style="font-size:12px">Slot minutes</span>
+      <input type="number" id="p_slotmin" value="20" min="5" max="60" style="width:70px">
+      <span class="muted" style="font-size:12px">Slots/day</span>
+      <input type="number" id="p_slotsday" value="24" min="5" max="60" style="width:70px">`;
+  } else {
+    box.innerHTML=`
+      <span class="muted" style="font-size:12px">Expected no-show reduction</span>
+      <input type="range" id="p_reduction" min="5" max="40" step="1" value="15" oninput="document.getElementById('p_reductionVal').textContent=this.value+'%'">
+      <span id="p_reductionVal">15%</span>`;
+  }
+}
+function simParams(){
+  const s=document.getElementById('simScenario').value;
+  if(s==='staffing') return {role:document.getElementById('p_role').value, delta:+document.getElementById('p_delta').value, horizon_days:30};
+  if(s==='schedule') return {slot_duration_minutes:+document.getElementById('p_slotmin').value, slots_per_day:+document.getElementById('p_slotsday').value, horizon_days:30};
+  return {intervention:'sms_reminders', expected_reduction_pct:+document.getElementById('p_reduction').value/100, horizon_days:30};
+}
+async function runSimulation(){
+  const btn=document.getElementById('simRunBtn');
+  btn.disabled=true; btn.innerHTML='<span class="spinner"></span> Running...';
+  const results=document.getElementById('simResults');
+  try{
+    const r=await (await fetch('/api/simulate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({clinic:document.getElementById('simClinic').value, scenario:document.getElementById('simScenario').value, params:simParams()})})).json();
+    if(r.error){ results.innerHTML=`<div class="panel"><b>Could not run simulation.</b><br><span class="muted">${r.error}</span></div>`; }
+    else renderSimResults(r);
+  }catch(err){
+    results.innerHTML=`<div class="panel"><b>Could not run simulation.</b><br><span class="muted">${err.message}</span></div>`;
+  }
+  btn.disabled=false; btn.textContent='Run simulation';
+}
+function renderSimResults(r){
+  const b=r.baseline, m=r.projected.projected_metrics;
+  const waitAfter = m.wait_time!=null ? m.wait_time : b.wait_time;
+  const utilAfter = m.utilization!=null ? m.utilization : (m.slot_utilization!=null ? m.slot_utilization : b.utilization);
+  let extra='';
+  if(r.scenario==='noshow'){
+    extra=`<div class="kpi"><div class="label">Projected revenue impact</div><div class="val">${money(m.revenue_impact)}</div><div class="tag ok">over ${r.projected.projected_metrics ? '30 days' : ''}</div></div>
+           <div class="kpi"><div class="label">Projected no-show rate</div><div class="val">${pct(m.no_show_rate)}</div><div class="tag ${m.no_show_rate<b.no_show_rate?'ok':'warn'}">was ${pct(b.no_show_rate)}</div></div>`;
+  }
+  document.getElementById('simResults').innerHTML=`
+    <div class="badge warn" style="margin-bottom:12px">⚠ PROJECTED — not actual, a modeled estimate for decision support only</div>
+    <div class="grid2">
+      <div class="panel"><h3>Baseline (current)</h3>
+        <div class="kpis" style="grid-template-columns:repeat(2,1fr)">
+          <div class="kpi"><div class="label">Avg wait</div><div class="val">${b.wait_time.toFixed(1)}m</div></div>
+          <div class="kpi"><div class="label">Utilization</div><div class="val">${pct(b.utilization)}</div></div>
+        </div>
+      </div>
+      <div class="panel"><h3>Projected (after change)</h3>
+        <div class="kpis" style="grid-template-columns:repeat(2,1fr)">
+          <div class="kpi"><div class="label">Avg wait</div><div class="val">${waitAfter.toFixed(1)}m</div><div class="tag ${waitAfter<b.wait_time?'ok':'warn'}">was ${b.wait_time.toFixed(1)}m</div></div>
+          <div class="kpi"><div class="label">Utilization</div><div class="val">${pct(utilAfter)}</div><div class="tag ${utilAfter>1?'bad':'ok'}">was ${pct(b.utilization)}</div></div>
+        </div>
+      </div>
+    </div>
+    ${extra?`<div class="kpis" style="grid-template-columns:repeat(2,1fr)">${extra}</div>`:''}
+    <div class="panel"><h3>Wait time: baseline vs projected</h3><canvas id="cSim" height="110"></canvas></div>`;
+  bar('cSim',['Baseline','Projected'],[+b.wait_time.toFixed(1),+waitAfter.toFixed(1)],['#94a3b8','#0d9488'],'m');
 }
 
 (function(){
