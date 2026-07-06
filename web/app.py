@@ -4,6 +4,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from agents.orchestrator import root_agent
 from agents._audit import audit_log, read_audit_log
+from agents.guardrail import guardrail_check
+from tools.groundedness import check_groundedness
 from rag.brief_history import retrieve_latest, retrieve_by_date, store_brief
 from google.adk.runners import InMemoryRunner
 from google.genai import types
@@ -219,23 +221,44 @@ async def generate_brief(request: Request):
         f"satisfaction {data['kpis']['satisfaction']} of 5. Flagged issues: {flag_txt}. "
         f"Give 2-3 short paragraphs: what happened, the main risks, and one recommended intervention."
     )
+    # Guardrail runs first (Constitution Rule 1) — real ALLOW/BLOCK decision on this path too.
+    gd = guardrail_check(prompt)
+
     # Never 500 on an LLM hiccup: fall back to a deterministic narrative so a brief always renders + saves.
     try:
         narrative = await _run_agent(prompt, f"brief_{start}_{end}_{clinic}", "brief_generator")
         if not narrative.strip():
-            narrative = _fallback_narrative(start, end, data)
+            raise ValueError("empty narrative")
+        source = f"Groq ({os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')})"
     except Exception:
         narrative = _fallback_narrative(start, end, data)
+        source = "deterministic fallback (LLM unavailable)"
+
+    # Evaluator (Constitution Rule 8: separate from the generator) re-checks every cited figure.
+    grounded = check_groundedness(narrative, data["kpis"], data["flags"])
+
+    trace = [
+        {"agent": "guardrail", "action": "screen request", "status": gd["decision"]},
+        {"agent": "ops_analyst", "action": "query warehouse (SQL)",
+         "status": f"{len(data['flags'])} flags, 5 KPIs"},
+        {"agent": "narrator", "action": "compose brief", "status": source},
+        {"agent": "evaluator", "action": "groundedness check",
+         "status": f"{grounded['score']}% · {grounded['verified']}/{grounded['figures']} figures verified"},
+        {"agent": "brief_history", "action": "store brief", "status": f"{end} · {scope}"},
+    ]
 
     # Save server-side so history always populates (dedup keyed by end date + clinic).
     try:
         store_brief(end, narrative, {"start": start, "end": end, "clinic": clinic,
-                                     "kpis": data["kpis"], "flags": data["flags"]})
+                                     "kpis": data["kpis"], "flags": data["flags"],
+                                     "groundedness": grounded})
     except Exception:
         pass
-    audit_log("web", "brief_generated", {"start": start, "end": end, "clinic": clinic, "flags": len(data["flags"])})
+    audit_log("web", "brief_generated", {"start": start, "end": end, "clinic": clinic,
+                                         "flags": len(data["flags"]), "groundedness": grounded["score"]})
 
-    return JSONResponse({"date": end, "narrative": narrative, **data, "disclaimer": DISCLAIMER})
+    return JSONResponse({"date": end, "narrative": narrative, **data,
+                         "groundedness": grounded, "trace": trace, "disclaimer": DISCLAIMER})
 
 
 @app.get("/api/briefs")
