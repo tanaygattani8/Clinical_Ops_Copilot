@@ -4,6 +4,7 @@ from agents.ops_analyst import ops_analyst_agent
 from agents.planner import planner_agent
 from agents.narrator import narrator_agent
 from agents._audit import audit_log
+from agents._config import MODEL
 
 def before_orchestrator(callback_context):
     audit_log("orchestrator", "session_started", {"session_id": callback_context.state.get("session_id", "default")})
@@ -16,7 +17,7 @@ def after_orchestrator(callback_context):
 # Root Agent orchestration
 root_agent = Agent(
     name="orchestrator",
-    model="gemini-2.0-flash",
+    model=MODEL,
     instruction=(
         "You are the Clinic Operations Copilot orchestrator. Your job is to route user requests:\n"
         "- For data queries, metrics, comparisons, or snapshots: route to ops_analyst.\n"

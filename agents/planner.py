@@ -6,6 +6,7 @@ from mcp.client.stdio import StdioServerParameters
 from tools.calculator import calculate, percentage_change, rate_per_unit
 from tools.date_resolver import resolve_date_range, get_comparison_periods
 from agents._audit import audit_log
+from agents._config import MODEL
 
 # Determine absolute path for python.exe inside the virtual environment (.venv)
 _base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -37,7 +38,7 @@ def after_planner(callback_context):
 
 planner_agent = Agent(
     name="planner",
-    model="gemini-2.0-flash",
+    model=MODEL,
     instruction=(
         "You are a clinic operations planner. Your role is to run operational what-if simulations. "
         "Always label any simulation results as PROJECTED (e.g. 'Projected Wait Time: 12 minutes'). "

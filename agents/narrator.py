@@ -6,6 +6,7 @@ from mcp.client.stdio import StdioServerParameters
 from tools.output_validator import validate_all
 from rag.brief_history import store_brief, retrieve_latest
 from agents._audit import audit_log
+from agents._config import MODEL
 
 # Determine absolute path for python.exe inside the virtual environment (.venv)
 _base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -35,7 +36,7 @@ def after_narrator(callback_context):
 
 narrator_agent = Agent(
     name="narrator",
-    model="gemini-2.0-flash",
+    model=MODEL,
     instruction=(
         "You are an executive brief narrator. Your job is to format validated operational reports.\n"
         "1. Retrieve the last 4 briefs using retrieve_latest() at the start of your run.\n"

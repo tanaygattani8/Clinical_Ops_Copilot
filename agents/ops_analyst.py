@@ -7,6 +7,7 @@ from tools.calculator import calculate, percentage_change, rate_per_unit
 from tools.date_resolver import resolve_date_range, get_comparison_periods
 from rag.metrics_catalog import lookup_metric
 from agents._audit import audit_log
+from agents._config import MODEL
 
 # Determine absolute path for python.exe inside the virtual environment (.venv)
 _base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -39,7 +40,7 @@ def after_ops_analyst(callback_context):
 
 ops_analyst_agent = Agent(
     name="ops_analyst",
-    model="gemini-2.0-flash",
+    model=MODEL,
     instruction=(
         "You are a clinic operations analyst. Your role is to analyze clinic data, "
         "resolve timeframes, perform rate or percentage calculations, and lookup metric "
