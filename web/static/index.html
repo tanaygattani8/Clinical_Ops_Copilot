@@ -28,8 +28,8 @@
   .topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 26px;background:var(--card);border-bottom:1px solid var(--line)}
   .topbar h1{font-size:19px;margin:0;font-weight:600}
   .topbar .sub{font-size:13px;color:var(--muted)}
-  select,.btn{font-size:13px;font-family:inherit}
-  select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+  select,input[type=date],.btn{font-size:13px;font-family:inherit}
+  select,input[type=date]{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
   .btn{padding:9px 16px;border:none;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer;font-weight:500}
   .btn:hover{background:#0b7c72}
   .btn:disabled{opacity:.6;cursor:default}
@@ -103,16 +103,20 @@
         <h1 id="viewTitle">Operations dashboard</h1>
         <div class="sub" id="viewSub">Key metrics across all clinics</div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select id="clinic" onchange="reload()"></select>
-        <select id="year" onchange="reload()"></select>
-        <select id="quarter" onchange="reload()">
+        <select id="year" onchange="applyPreset()"></select>
+        <select id="quarter" onchange="applyPreset()">
           <option value="full">Full year</option>
           <option value="1">Q1 (Jan–Mar)</option>
           <option value="2">Q2 (Apr–Jun)</option>
           <option value="3">Q3 (Jul–Sep)</option>
           <option value="4">Q4 (Oct–Dec)</option>
         </select>
+        <span class="muted" style="font-size:12px">From</span>
+        <input type="date" id="from" min="2019-01-01" max="2025-12-31" onchange="reload()">
+        <span class="muted" style="font-size:12px">To</span>
+        <input type="date" id="to" min="2019-01-01" max="2025-12-31" onchange="reload()">
       </div>
     </div>
 
@@ -164,16 +168,31 @@ const sessionId = 'session_'+Date.now();
 const DISCLAIMER = "For operational decision support only. Not a medical diagnosis, treatment recommendation, or clinical advice.";
 const QRANGE = {full:['01-01','12-31'],'1':['01-01','03-31'],'2':['04-01','06-30'],'3':['07-01','09-30'],'4':['10-01','12-31']};
 
+// The From/To date inputs are the source of truth; year+quarter are quick presets that fill them.
 function period(){
+  const f=document.getElementById('from').value, t=document.getElementById('to').value;
+  const y=document.getElementById('year').value;
+  return [f||`${y}-01-01`, t||`${y}-12-31`];
+}
+function applyPreset(){
   const y=document.getElementById('year').value;
   const [a,b]=QRANGE[document.getElementById('quarter').value];
-  return [`${y}-${a}`,`${y}-${b}`];
+  document.getElementById('from').value=`${y}-${a}`;
+  document.getElementById('to').value=`${y}-${b}`;
+  reload();
 }
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function periodLabel(s,e){
   if(!s||!e) return '';
-  const y=s.slice(0,4), q={'01':'Q1','04':'Q2','07':'Q3','10':'Q4'}[s.slice(5,7)];
-  if(s.slice(5)==='01-01'&&e.slice(5)==='12-31') return `Full year ${y}`;
-  return q?`${q} ${y}`:`${s} → ${e}`;
+  const y=s.slice(0,4);
+  if(y===e.slice(0,4)){
+    if(s.slice(5)==='01-01'&&e.slice(5)==='12-31') return `Full year ${y}`;
+    const q={'01-01|03-31':'Q1','04-01|06-30':'Q2','07-01|09-30':'Q3','10-01|12-31':'Q4'}[`${s.slice(5)}|${e.slice(5)}`];
+    if(q) return `${q} ${y}`;
+    const m=s.slice(5,7), last=String(new Date(+y,+m,0).getDate()).padStart(2,'0');
+    if(s.slice(0,7)===e.slice(0,7)&&s.slice(8)==='01'&&e.slice(8)===last) return `${MONTHS[+m-1]} ${y}`;
+  }
+  return `${s} → ${e}`;
 }
 
 // tabs
@@ -399,7 +418,7 @@ async function loadAudit(){
   csel.appendChild(new Option('All clinics','all'));
   for(let c=1;c<=10;c++){ const id=`CLINIC_${String(c).padStart(2,'0')}`; csel.appendChild(new Option(id,id)); }
 })();
-loadDashboard();
+applyPreset();  // sync From/To to the default preset (Full year 2025), then load
 </script>
 </body>
 </html>
