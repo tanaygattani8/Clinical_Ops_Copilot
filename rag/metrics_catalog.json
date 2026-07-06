@@ -1,0 +1,54 @@
+{
+  "metrics": [
+    {
+      "name": "no_show_rate",
+      "display_name": "No-Show Rate",
+      "description": "Proportion of scheduled appointments where patient did not arrive",
+      "unit": "ratio",
+      "valid_range": [0.0, 1.0],
+      "direction": "lower_is_better",
+      "category": "access",
+      "related_metrics": ["utilization", "revenue_per_visit"]
+    },
+    {
+      "name": "avg_wait",
+      "display_name": "Average Wait Time",
+      "description": "Mean minutes from check-in to provider contact",
+      "unit": "minutes",
+      "valid_range": [0.0, 300.0],
+      "direction": "lower_is_better",
+      "category": "efficiency",
+      "related_metrics": ["patient_satisfaction", "utilization"]
+    },
+    {
+      "name": "utilization",
+      "display_name": "Provider Utilization",
+      "description": "Proportion of available appointment slots filled",
+      "unit": "ratio",
+      "valid_range": [0.0, 1.5],
+      "direction": "higher_is_better",
+      "category": "efficiency",
+      "related_metrics": ["staffing", "avg_wait"]
+    },
+    {
+      "name": "revenue_per_visit",
+      "display_name": "Revenue Per Visit",
+      "description": "Average revenue generated per completed appointment",
+      "unit": "USD",
+      "valid_range": [0.0, 10000.0],
+      "direction": "higher_is_better",
+      "category": "financial",
+      "related_metrics": ["utilization", "no_show_rate"]
+    },
+    {
+      "name": "patient_satisfaction",
+      "display_name": "Patient Satisfaction Score",
+      "description": "Mean survey score across all categories (scale 1-5)",
+      "unit": "score (1-5)",
+      "valid_range": [0.0, 5.0],
+      "direction": "higher_is_better",
+      "category": "quality",
+      "related_metrics": ["avg_wait", "staffing"]
+    }
+  ]
+}

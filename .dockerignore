@@ -1,0 +1,13 @@
+# Keep the image small and Linux-clean. README.md is NOT ignored — the build needs it.
+.venv/
+venv/
+.git/
+.gitignore
+__pycache__/
+*.egg-info/
+.pytest_cache/
+tests/
+data/*.duckdb
+data/*.duckdb.wal
+logs/*.jsonl
+.env
