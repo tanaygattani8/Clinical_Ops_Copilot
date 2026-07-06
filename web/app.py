@@ -34,45 +34,55 @@ async def index():
 
 
 # ── Fast SQL endpoints (no LLM) ──
+def _clinic_clause(clinic):
+    """Returns (sql_fragment, params) — empty when 'all'/blank so all clinics aggregate."""
+    return (" AND clinic_id = ?", [clinic]) if clinic not in ("all", "", None) else ("", [])
+
+
 @app.get("/api/dashboard")
-async def dashboard(start: str = _DEFAULT_START, end: str = _DEFAULT_END):
+async def dashboard(start: str = _DEFAULT_START, end: str = _DEFAULT_END, clinic: str = "all"):
     con = _con()
+    cf, cp = _clinic_clause(clinic)
     try:
-        def metric_avg(name, table="daily_metrics", col="metric_value"):
-            row = con.execute(
-                f"SELECT AVG({col}) FROM {table} WHERE metric_name = ? AND date BETWEEN ? AND ?"
-                if table == "daily_metrics" else
-                f"SELECT AVG({col}) FROM {table} WHERE date BETWEEN ? AND ?",
-                ([name, start, end] if table == "daily_metrics" else [start, end]),
-            ).fetchone()[0]
-            return round(row, 4) if row is not None else None
+        def avg_metric(name):
+            r = con.execute(
+                "SELECT AVG(metric_value) FROM daily_metrics "
+                "WHERE metric_name = ? AND date BETWEEN ? AND ?" + cf,
+                [name, start, end] + cp).fetchone()[0]
+            return round(r, 4) if r is not None else None
+
+        sat = con.execute(
+            "SELECT AVG(score) FROM patient_satisfaction WHERE date BETWEEN ? AND ?" + cf,
+            [start, end] + cp).fetchone()[0]
 
         kpis = {
-            "utilization": metric_avg("utilization"),
-            "no_show_rate": metric_avg("no_show_rate"),
-            "avg_wait": metric_avg("avg_wait"),
-            "revenue_per_visit": metric_avg("revenue_per_visit"),
-            "satisfaction": metric_avg(None, table="patient_satisfaction", col="score"),
+            "utilization": avg_metric("utilization"),
+            "no_show_rate": avg_metric("no_show_rate"),
+            "avg_wait": avg_metric("avg_wait"),
+            "revenue_per_visit": avg_metric("revenue_per_visit"),
+            "satisfaction": round(sat, 4) if sat is not None else None,
         }
 
-        # Anomaly flags: over-capacity utilization and high no-show clinics.
+        # Anomaly flags: over-capacity utilization and high no-show (scoped to clinic if set).
         flags = []
         util = con.execute(
-            "SELECT clinic_id, AVG(metric_value), MAX(metric_value) FROM daily_metrics "
-            "WHERE metric_name='utilization' AND date BETWEEN ? AND ? GROUP BY clinic_id "
-            "HAVING MAX(metric_value) > 1.10 ORDER BY clinic_id", [start, end]).fetchall()
-        for cid, avg, mx in util:
+            "SELECT clinic_id, MAX(metric_value) FROM daily_metrics "
+            "WHERE metric_name='utilization' AND date BETWEEN ? AND ?" + cf +
+            " GROUP BY clinic_id HAVING MAX(metric_value) > 1.10 ORDER BY clinic_id",
+            [start, end] + cp).fetchall()
+        for cid, mx in util:
             flags.append({"clinic": cid, "severity": "high",
                           "issue": f"Utilization peaked at {mx*100:.0f}% (over capacity)"})
         nos = con.execute(
             "SELECT clinic_id, MAX(metric_value) FROM daily_metrics "
-            "WHERE metric_name='no_show_rate' AND date BETWEEN ? AND ? GROUP BY clinic_id "
-            "HAVING MAX(metric_value) > 0.30 ORDER BY clinic_id", [start, end]).fetchall()
+            "WHERE metric_name='no_show_rate' AND date BETWEEN ? AND ?" + cf +
+            " GROUP BY clinic_id HAVING MAX(metric_value) > 0.30 ORDER BY clinic_id",
+            [start, end] + cp).fetchall()
         for cid, mx in nos:
             flags.append({"clinic": cid, "severity": "medium",
                           "issue": f"No-show rate reached {mx*100:.0f}%"})
 
-        return JSONResponse({"start": start, "end": end, "kpis": kpis, "flags": flags})
+        return JSONResponse({"start": start, "end": end, "clinic": clinic, "kpis": kpis, "flags": flags})
     finally:
         con.close()
 
@@ -91,14 +101,46 @@ async def metric_by_clinic(metric: str = "utilization", start: str = _DEFAULT_ST
 
 
 @app.get("/api/metric/trend")
-async def metric_trend(metric: str = "utilization", start: str = _DEFAULT_START, end: str = _DEFAULT_END):
+async def metric_trend(metric: str = "utilization", start: str = _DEFAULT_START,
+                       end: str = _DEFAULT_END, clinic: str = "all"):
     con = _con()
+    cf, cp = _clinic_clause(clinic)
     try:
         rows = con.execute(
             "SELECT date_trunc('week', date) AS wk, AVG(metric_value) FROM daily_metrics "
-            "WHERE metric_name = ? AND date BETWEEN ? AND ? GROUP BY wk ORDER BY wk",
-            [metric, start, end]).fetchall()
+            "WHERE metric_name = ? AND date BETWEEN ? AND ?" + cf + " GROUP BY wk ORDER BY wk",
+            [metric, start, end] + cp).fetchall()
         return JSONResponse([{"week": str(r[0]), "value": round(r[1], 4)} for r in rows])
+    finally:
+        con.close()
+
+
+@app.get("/api/clinic/appointments")
+async def clinic_appointments(clinic: str, group_by: str = "status",
+                              start: str = _DEFAULT_START, end: str = _DEFAULT_END):
+    if group_by not in ("status", "provider_id"):  # whitelist: value is interpolated into SQL
+        return JSONResponse({"error": "group_by must be 'status' or 'provider_id'"}, status_code=400)
+    con = _con()
+    try:
+        rows = con.execute(
+            f"SELECT {group_by}, COUNT(*), AVG(wait_minutes) FROM appointments "
+            "WHERE clinic_id = ? AND date BETWEEN ? AND ? GROUP BY 1 ORDER BY 1",
+            [clinic, start, end]).fetchall()
+        return JSONResponse([{"key": r[0], "count": r[1],
+                              "avg_wait": round(r[2], 1) if r[2] is not None else None} for r in rows])
+    finally:
+        con.close()
+
+
+@app.get("/api/clinic/satisfaction")
+async def clinic_satisfaction(clinic: str, start: str = _DEFAULT_START, end: str = _DEFAULT_END):
+    con = _con()
+    try:
+        rows = con.execute(
+            "SELECT category, AVG(score), COUNT(*) FROM patient_satisfaction "
+            "WHERE clinic_id = ? AND date BETWEEN ? AND ? GROUP BY 1 ORDER BY 1",
+            [clinic, start, end]).fetchall()
+        return JSONResponse([{"category": r[0], "score": round(r[1], 2), "n": r[2]} for r in rows])
     finally:
         con.close()
 

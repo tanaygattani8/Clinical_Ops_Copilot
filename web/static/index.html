@@ -104,6 +104,7 @@
         <div class="sub" id="viewSub">Key metrics across all clinics</div>
       </div>
       <div style="display:flex;gap:8px">
+        <select id="clinic" onchange="reload()"></select>
         <select id="year" onchange="reload()"></select>
         <select id="quarter" onchange="reload()">
           <option value="full">Full year</option>
@@ -119,14 +120,7 @@
       <!-- DASHBOARD -->
       <section id="view-dashboard" class="view active">
         <div class="kpis" id="kpis"></div>
-        <div class="grid2">
-          <div class="panel"><h3>Utilization by clinic</h3><canvas id="cUtil" height="150"></canvas></div>
-          <div class="panel"><h3>Utilization trend (weekly)</h3><canvas id="cTrend" height="150"></canvas></div>
-        </div>
-        <div class="grid2">
-          <div class="panel"><h3>No-show rate by clinic</h3><canvas id="cNoShow" height="150"></canvas></div>
-          <div class="panel flags"><h3>Flagged issues</h3><div id="flags"></div></div>
-        </div>
+        <div id="dashBody"></div>
       </section>
 
       <!-- EXECUTIVE BRIEF -->
@@ -199,9 +193,17 @@ function reload(){ loadDashboard(); }
 const pct=v=>v==null?'—':(v*100).toFixed(1)+'%';
 const money=v=>v==null?'—':'$'+v.toFixed(0);
 
+function clinicVal(){ return document.getElementById('clinic').value; }
+function renderFlags(flags){
+  document.getElementById('flags').innerHTML = flags.length
+    ? flags.map(f=>`<div class="flag ${f.severity}"><span class="sev">${f.clinic}</span><span>${f.issue}</span></div>`).join('')
+    : '<div class="empty">No anomalies detected for this period.</div>';
+}
+const jget = u => fetch(u).then(r=>r.json());
+
 async function loadDashboard(){
-  const [s,e]=period();
-  const d=await (await fetch(`/api/dashboard?start=${s}&end=${e}`)).json();
+  const [s,e]=period(); const cl=clinicVal();
+  const d=await jget(`/api/dashboard?start=${s}&end=${e}&clinic=${cl}`);
   const k=d.kpis;
   document.getElementById('kpis').innerHTML = `
     ${kpi('Avg utilization',pct(k.utilization),k.utilization>1?'bad':'ok',k.utilization>1?'over capacity':'healthy')}
@@ -209,19 +211,58 @@ async function loadDashboard(){
     ${kpi('Avg wait',k.avg_wait==null?'—':k.avg_wait.toFixed(1)+'m','ok','stable')}
     ${kpi('Revenue / visit',money(k.revenue_per_visit),'ok','stable')}
     ${kpi('Satisfaction',k.satisfaction==null?'—':k.satisfaction.toFixed(1)+' / 5','ok','')}`;
-  document.getElementById('flags').innerHTML = d.flags.length
-    ? d.flags.map(f=>`<div class="flag ${f.severity}"><span class="sev">${f.clinic}</span><span>${f.issue}</span></div>`).join('')
-    : '<div class="empty">No anomalies detected for this period.</div>';
+  const body=document.getElementById('dashBody');
 
-  const byUtil=await (await fetch(`/api/metric/by-clinic?metric=utilization&start=${s}&end=${e}`)).json();
-  const byNo=await (await fetch(`/api/metric/by-clinic?metric=no_show_rate&start=${s}&end=${e}`)).json();
-  const trend=await (await fetch(`/api/metric/trend?metric=utilization&start=${s}&end=${e}`)).json();
-
-  bar('cUtil',byUtil.map(r=>r.clinic.replace('CLINIC_','C')),byUtil.map(r=>+(r.value*100).toFixed(1)),
-      byUtil.map(r=>r.value>1?'#dc2626':'#0d9488'),'%');
-  bar('cNoShow',byNo.map(r=>r.clinic.replace('CLINIC_','C')),byNo.map(r=>+(r.value*100).toFixed(1)),
-      byNo.map(r=>r.value>0.3?'#d97706':'#0d9488'),'%');
-  line('cTrend',trend.map(r=>r.week.slice(5)),trend.map(r=>+(r.value*100).toFixed(1)));
+  if(cl==='all'){
+    body.innerHTML=`
+      <div class="grid2">
+        <div class="panel"><h3>Utilization by clinic</h3><canvas id="cUtil" height="150"></canvas></div>
+        <div class="panel"><h3>Utilization trend (weekly)</h3><canvas id="cTrend" height="150"></canvas></div>
+      </div>
+      <div class="grid2">
+        <div class="panel"><h3>No-show rate by clinic</h3><canvas id="cNoShow" height="150"></canvas></div>
+        <div class="panel flags"><h3>Flagged issues</h3><div id="flags"></div></div>
+      </div>`;
+    renderFlags(d.flags);
+    const [byUtil,byNo,trend]=await Promise.all([
+      jget(`/api/metric/by-clinic?metric=utilization&start=${s}&end=${e}`),
+      jget(`/api/metric/by-clinic?metric=no_show_rate&start=${s}&end=${e}`),
+      jget(`/api/metric/trend?metric=utilization&start=${s}&end=${e}`)]);
+    bar('cUtil',byUtil.map(r=>r.clinic.replace('CLINIC_','C')),byUtil.map(r=>+(r.value*100).toFixed(1)),
+        byUtil.map(r=>r.value>1?'#dc2626':'#0d9488'),'%');
+    bar('cNoShow',byNo.map(r=>r.clinic.replace('CLINIC_','C')),byNo.map(r=>+(r.value*100).toFixed(1)),
+        byNo.map(r=>r.value>0.3?'#d97706':'#0d9488'),'%');
+    line('cTrend',trend.map(r=>r.week.slice(5)),trend.map(r=>+(r.value*100).toFixed(1)));
+  } else {
+    body.innerHTML=`
+      <div class="grid2">
+        <div class="panel"><h3>Utilization trend (weekly)</h3><canvas id="cTrend" height="150"></canvas></div>
+        <div class="panel"><h3>Appointment outcomes</h3><canvas id="cStatus" height="150"></canvas></div>
+      </div>
+      <div class="grid2">
+        <div class="panel"><h3>Avg wait by provider (min)</h3><canvas id="cProv" height="150"></canvas></div>
+        <div class="panel"><h3>Satisfaction by category (of 5)</h3><canvas id="cSat" height="150"></canvas></div>
+      </div>
+      <div class="panel flags" style="margin-top:14px"><h3>Flagged issues</h3><div id="flags"></div></div>`;
+    renderFlags(d.flags);
+    const [trend,status,prov,sat]=await Promise.all([
+      jget(`/api/metric/trend?metric=utilization&start=${s}&end=${e}&clinic=${cl}`),
+      jget(`/api/clinic/appointments?clinic=${cl}&group_by=status&start=${s}&end=${e}`),
+      jget(`/api/clinic/appointments?clinic=${cl}&group_by=provider_id&start=${s}&end=${e}`),
+      jget(`/api/clinic/satisfaction?clinic=${cl}&start=${s}&end=${e}`)]);
+    line('cTrend',trend.map(r=>r.week.slice(5)),trend.map(r=>+(r.value*100).toFixed(1)));
+    const scolor={completed:'#16a34a',no_show:'#d97706',cancelled:'#94a3b8'};
+    doughnut('cStatus',status.map(r=>r.key),status.map(r=>r.count),status.map(r=>scolor[r.key]||'#0d9488'));
+    bar('cProv',prov.map(r=>r.key.replace('PROVIDER_','P')),prov.map(r=>r.avg_wait),
+        prov.map(r=>r.avg_wait>30?'#dc2626':'#0d9488'),'m');
+    bar('cSat',sat.map(r=>r.category),sat.map(r=>r.score),sat.map(()=>'#0d9488'),'');
+  }
+}
+function doughnut(id,labels,data,colors){
+  destroy(id);
+  charts[id]=new Chart(document.getElementById(id),{type:'doughnut',
+    data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0}]},
+    options:{plugins:{legend:{position:'right'}}}});
 }
 function kpi(l,v,tag,txt){return `<div class="kpi"><div class="label">${l}</div><div class="val">${v}</div><div class="tag ${tag}">${txt}</div></div>`;}
 function destroy(id){ if(charts[id]) charts[id].destroy(); }
@@ -341,8 +382,11 @@ async function loadAudit(){
 }
 
 (function(){
-  const sel=document.getElementById('year');
-  for(let y=2025;y>=2019;y--){ const o=document.createElement('option'); o.value=y; o.textContent=y; sel.appendChild(o); }
+  const ysel=document.getElementById('year');
+  for(let y=2025;y>=2019;y--){ const o=document.createElement('option'); o.value=y; o.textContent=y; ysel.appendChild(o); }
+  const csel=document.getElementById('clinic');
+  csel.appendChild(new Option('All clinics','all'));
+  for(let c=1;c<=10;c++){ const id=`CLINIC_${String(c).padStart(2,'0')}`; csel.appendChild(new Option(id,id)); }
 })();
 loadDashboard();
 </script>
