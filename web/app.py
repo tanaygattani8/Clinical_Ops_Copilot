@@ -180,13 +180,15 @@ async def chat(request: Request):
 def _fallback_narrative(start: str, end: str, data: dict) -> str:
     """Deterministic brief written from the SQL numbers, used when the LLM is unavailable."""
     k, flags = data["kpis"], data["flags"]
+    clinic = data.get("clinic", "all")
+    scope = "all clinics" if clinic in ("all", "", None) else clinic
     risk = "; ".join(f"{f['clinic']} — {f['issue']}" for f in flags) or \
         "No material anomalies were flagged this period."
     rec = ("Rebalance peak-day demand at the over-capacity site and run targeted no-show outreach."
            if flags else "Maintain current staffing; keep monitoring weekly utilization for drift.")
     return (
-        f"## Operations summary — {start} to {end}\n\n"
-        f"Across all clinics, average provider utilization ran at **{(k['utilization'] or 0)*100:.1f}%** "
+        f"## Operations summary — {scope}, {start} to {end}\n\n"
+        f"For {scope}, average provider utilization ran at **{(k['utilization'] or 0)*100:.1f}%** "
         f"with a no-show rate of **{(k['no_show_rate'] or 0)*100:.1f}%**, an average wait of "
         f"**{(k['avg_wait'] or 0):.1f} minutes**, and revenue per visit of **${(k['revenue_per_visit'] or 0):.0f}**. "
         f"Mean patient satisfaction was **{(k['satisfaction'] or 0):.1f}/5**.\n\n"
@@ -201,15 +203,17 @@ async def generate_brief(request: Request):
     body = await request.json()
     start = body.get("start", _DEFAULT_START)
     end = body.get("end", _DEFAULT_END)
+    clinic = body.get("clinic", "all")
+    scope = "all clinics" if clinic in ("all", "", None) else clinic
 
     # Deterministic data first (never depends on the model).
-    dash = await dashboard(start, end)
+    dash = await dashboard(start, end, clinic)
     import json as _json
     data = _json.loads(bytes(dash.body).decode())
     flag_txt = "; ".join(f"{f['clinic']}: {f['issue']}" for f in data["flags"]) or "no anomalies detected"
 
     prompt = (
-        f"Write a concise executive-brief narrative for clinic operations from {start} to {end}. "
+        f"Write a concise executive-brief narrative for {scope} from {start} to {end}. "
         f"Key metrics: utilization {data['kpis']['utilization']}, no-show rate {data['kpis']['no_show_rate']}, "
         f"average wait {data['kpis']['avg_wait']} minutes, revenue per visit {data['kpis']['revenue_per_visit']}, "
         f"satisfaction {data['kpis']['satisfaction']} of 5. Flagged issues: {flag_txt}. "
@@ -217,18 +221,19 @@ async def generate_brief(request: Request):
     )
     # Never 500 on an LLM hiccup: fall back to a deterministic narrative so a brief always renders + saves.
     try:
-        narrative = await _run_agent(prompt, f"brief_{start}_{end}", "brief_generator")
+        narrative = await _run_agent(prompt, f"brief_{start}_{end}_{clinic}", "brief_generator")
         if not narrative.strip():
             narrative = _fallback_narrative(start, end, data)
     except Exception:
         narrative = _fallback_narrative(start, end, data)
 
-    # Save server-side so history always populates (keyed by end date).
+    # Save server-side so history always populates (dedup keyed by end date + clinic).
     try:
-        store_brief(end, narrative, {"start": start, "end": end, "kpis": data["kpis"], "flags": data["flags"]})
+        store_brief(end, narrative, {"start": start, "end": end, "clinic": clinic,
+                                     "kpis": data["kpis"], "flags": data["flags"]})
     except Exception:
         pass
-    audit_log("web", "brief_generated", {"start": start, "end": end, "flags": len(data["flags"])})
+    audit_log("web", "brief_generated", {"start": start, "end": end, "clinic": clinic, "flags": len(data["flags"])})
 
     return JSONResponse({"date": end, "narrative": narrative, **data, "disclaimer": DISCLAIMER})
 

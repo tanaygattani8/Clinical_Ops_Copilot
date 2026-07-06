@@ -33,9 +33,14 @@ def store_brief(date: str, brief_markdown: str, metadata: dict) -> None:
         metadata: Arbitrary metadata dict (JSON-serialisable).
     """
     _ensure_table()
+    clinic = (metadata or {}).get("clinic", "all")
     con = _get_connection()
     try:
-        con.execute("DELETE FROM brief_history WHERE date = ?", (date,))  # replace same-period brief
+        # Replace an existing brief for the same period + clinic (not across clinics).
+        con.execute(
+            "DELETE FROM brief_history WHERE date = ? "
+            "AND COALESCE(json_extract_string(metadata, '$.clinic'), 'all') = ?",
+            (date, clinic))
         con.execute(
             "INSERT INTO brief_history VALUES (?, ?, ?, ?)",
             (date, brief_markdown, json.dumps(metadata), datetime.datetime.utcnow())
