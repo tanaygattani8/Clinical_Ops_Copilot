@@ -103,13 +103,16 @@
         <h1 id="viewTitle">Operations dashboard</h1>
         <div class="sub" id="viewSub">Key metrics across all clinics</div>
       </div>
-      <select id="period" onchange="reload()">
-        <option value="2025-01-01|2025-03-31">Q1 2025</option>
-        <option value="2025-04-01|2025-06-30">Q2 2025</option>
-        <option value="2025-07-01|2025-09-30">Q3 2025</option>
-        <option value="2025-10-01|2025-12-31">Q4 2025</option>
-        <option value="2025-01-01|2025-12-31">Full year 2025</option>
-      </select>
+      <div style="display:flex;gap:8px">
+        <select id="year" onchange="reload()"></select>
+        <select id="quarter" onchange="reload()">
+          <option value="full">Full year</option>
+          <option value="1">Q1 (Jan–Mar)</option>
+          <option value="2">Q2 (Apr–Jun)</option>
+          <option value="3">Q3 (Jul–Sep)</option>
+          <option value="4">Q4 (Oct–Dec)</option>
+        </select>
+      </div>
     </div>
 
     <div class="content">
@@ -162,9 +165,22 @@ const TITLES = {
   audit:["Audit log","Every agent action, logged for compliance"]
 };
 let charts = {};
+let _briefs = [];
 const sessionId = 'session_'+Date.now();
+const DISCLAIMER = "For operational decision support only. Not a medical diagnosis, treatment recommendation, or clinical advice.";
+const QRANGE = {full:['01-01','12-31'],'1':['01-01','03-31'],'2':['04-01','06-30'],'3':['07-01','09-30'],'4':['10-01','12-31']};
 
-function period(){ return document.getElementById('period').value.split('|'); }
+function period(){
+  const y=document.getElementById('year').value;
+  const [a,b]=QRANGE[document.getElementById('quarter').value];
+  return [`${y}-${a}`,`${y}-${b}`];
+}
+function periodLabel(s,e){
+  if(!s||!e) return '';
+  const y=s.slice(0,4), q={'01':'Q1','04':'Q2','07':'Q3','10':'Q4'}[s.slice(5,7)];
+  if(s.slice(5)==='01-01'&&e.slice(5)==='12-31') return `Full year ${y}`;
+  return q?`${q} ${y}`:`${s} → ${e}`;
+}
 
 // tabs
 document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>{
@@ -231,24 +247,7 @@ async function generateBrief(){
   try{
     const r=await (await fetch('/api/generate-brief',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({start:s,end:e})})).json();
-    const k=r.kpis;
-    doc.innerHTML=`<div class="doc">
-      <div class="head">
-        <div><h2>Executive brief</h2><div class="muted">${r.start} to ${r.end} · all clinics</div></div>
-        <button class="btn ghost" onclick="window.print()">Export PDF</button>
-      </div>
-      <div class="chips">
-        <span class="chip">Utilization ${pct(k.utilization)}</span>
-        <span class="chip">No-show ${pct(k.no_show_rate)}</span>
-        <span class="chip">Wait ${k.avg_wait?k.avg_wait.toFixed(1)+'m':'—'}</span>
-        <span class="chip">Revenue ${money(k.revenue_per_visit)}</span>
-        <span class="chip">Satisfaction ${k.satisfaction?k.satisfaction.toFixed(1):'—'}/5</span>
-      </div>
-      ${r.flags.length?'<div class="flags">'+r.flags.map(f=>`<div class="flag ${f.severity}"><span class="sev">${f.clinic}</span><span>${f.issue}</span></div>`).join('')+'</div>':''}
-      <h3 style="margin:18px 0 4px;font-size:15px">AI executive summary</h3>
-      <div class="narrative">${marked.parse(r.narrative||'_No narrative returned._')}</div>
-      <div class="disclaimer">⚠ ${r.disclaimer}</div>
-    </div>`;
+    await renderBrief({start:r.start,end:r.end,narrative:r.narrative,kpis:r.kpis,flags:r.flags});
     loadBriefs();
   }catch(err){
     doc.innerHTML=`<div class="panel"><b>Could not generate brief.</b><br><span class="muted">${err.message}. On the free tier this can be a rate limit — wait a minute and retry.</span></div>`;
@@ -256,12 +255,66 @@ async function generateBrief(){
   btn.disabled=false; btn.textContent='Generate executive brief';
 }
 
+async function renderBrief(b){
+  const doc=document.getElementById('briefDoc'); const k=b.kpis||{};
+  doc.innerHTML=`<div class="doc">
+    <div class="head">
+      <div><h2>Executive brief</h2><div class="muted">${periodLabel(b.start,b.end)} · ${b.start} to ${b.end} · all clinics</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn ghost" id="dlBrief">⬇ Download</button>
+        <button class="btn ghost" onclick="window.print()">Export PDF</button>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip">Utilization ${pct(k.utilization)}</span>
+      <span class="chip">No-show ${pct(k.no_show_rate)}</span>
+      <span class="chip">Wait ${k.avg_wait?k.avg_wait.toFixed(1)+'m':'—'}</span>
+      <span class="chip">Revenue ${money(k.revenue_per_visit)}</span>
+      <span class="chip">Satisfaction ${k.satisfaction?k.satisfaction.toFixed(1):'—'}/5</span>
+    </div>
+    ${(b.flags&&b.flags.length)?'<div class="flags">'+b.flags.map(f=>`<div class="flag ${f.severity}"><span class="sev">${f.clinic}</span><span>${f.issue}</span></div>`).join('')+'</div>':''}
+    <div class="panel" style="margin:16px 0"><h3>Utilization by clinic</h3><canvas id="cBrief" height="110"></canvas></div>
+    <h3 style="margin:18px 0 4px;font-size:15px">Executive summary</h3>
+    <div class="narrative">${marked.parse(b.narrative||'_No narrative._')}</div>
+    <div class="disclaimer">⚠ ${DISCLAIMER}</div>
+  </div>`;
+  document.getElementById('dlBrief').onclick=()=>downloadBrief(b);
+  const byUtil=await (await fetch(`/api/metric/by-clinic?metric=utilization&start=${b.start}&end=${b.end}`)).json();
+  bar('cBrief',byUtil.map(r=>r.clinic.replace('CLINIC_','C')),byUtil.map(r=>+(r.value*100).toFixed(1)),
+      byUtil.map(r=>r.value>1?'#dc2626':'#0d9488'),'%');
+}
+
+function briefMarkdown(b){
+  const k=b.kpis||{};
+  return `# Executive brief — ${periodLabel(b.start,b.end)} (${b.start} to ${b.end})\n\n`+
+    `- **Utilization:** ${pct(k.utilization)}\n- **No-show rate:** ${pct(k.no_show_rate)}\n`+
+    `- **Avg wait:** ${k.avg_wait?k.avg_wait.toFixed(1)+' min':'—'}\n- **Revenue/visit:** ${money(k.revenue_per_visit)}\n`+
+    `- **Satisfaction:** ${k.satisfaction?k.satisfaction.toFixed(1):'—'}/5\n\n`+
+    ((b.flags&&b.flags.length)?('## Flagged issues\n'+b.flags.map(f=>`- **${f.clinic}** — ${f.issue}`).join('\n')+'\n\n'):'')+
+    (b.narrative||'')+`\n\n---\n_${DISCLAIMER}_\n`;
+}
+function downloadBrief(b){
+  const blob=new Blob([briefMarkdown(b)],{type:'text/markdown'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=`executive-brief-${b.start}_to_${b.end}.md`; a.click(); URL.revokeObjectURL(a.href);
+}
+
 async function loadBriefs(){
   const list=document.getElementById('briefList');
-  const data=await (await fetch('/api/briefs?n=8')).json();
-  list.innerHTML = data.length ? data.map(b=>
-    `<div class="briefcard"><div class="d">${b.date}</div><div class="p">${(b.brief_markdown||'').slice(0,160)}…</div></div>`).join('')
-    : '<div class="empty">No briefs generated yet.</div>';
+  _briefs=await (await fetch('/api/briefs?n=12')).json();
+  list.innerHTML = _briefs.length ? _briefs.map((b,i)=>{
+    const m=b.metadata||{};
+    return `<div class="briefcard" onclick="openBrief(${i})">
+      <div class="d">${periodLabel(m.start,m.end)||b.date}</div>
+      <div class="p">${(b.brief_markdown||'').replace(/[#*_>\`]/g,'').trim().slice(0,150)}…</div>
+      <div style="margin-top:8px;font-size:12px;color:var(--accent)">Open →</div>
+    </div>`;}).join('')
+    : '<div class="empty">No briefs generated yet. Pick a period above and click “Generate executive brief”.</div>';
+}
+function openBrief(i){
+  const b=_briefs[i], m=b.metadata||{};
+  renderBrief({start:m.start,end:m.end,narrative:b.brief_markdown,kpis:m.kpis||{},flags:m.flags||[]});
+  document.getElementById('briefDoc').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 async function sendChat(){
@@ -287,6 +340,10 @@ async function loadAudit(){
     : '<tr><td colspan="3" class="empty">No audit entries yet.</td></tr>';
 }
 
+(function(){
+  const sel=document.getElementById('year');
+  for(let y=2025;y>=2019;y--){ const o=document.createElement('option'); o.value=y; o.textContent=y; sel.appendChild(o); }
+})();
 loadDashboard();
 </script>
 </body>

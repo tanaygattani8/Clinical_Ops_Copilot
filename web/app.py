@@ -125,8 +125,33 @@ async def chat(request: Request):
     message = body.get("message", "")
     session_id = body.get("session_id", "default")
     audit_log("web", "chat_request", {"message_snippet": message[:120], "session_id": session_id})
-    response_text = await _run_agent(message, session_id, "web_user")
+    try:
+        response_text = await _run_agent(message, session_id, "web_user")
+        if not response_text.strip():
+            response_text = "I couldn't produce a response for that. Try rephrasing, or ask about a specific clinic/metric/period."
+    except Exception as e:
+        response_text = (f"⚠ The assistant is temporarily unavailable ({type(e).__name__}). "
+                         "On the free tier this is usually a rate limit — wait a minute and retry.")
     return JSONResponse({"response": response_text, "session_id": session_id})
+
+
+def _fallback_narrative(start: str, end: str, data: dict) -> str:
+    """Deterministic brief written from the SQL numbers, used when the LLM is unavailable."""
+    k, flags = data["kpis"], data["flags"]
+    risk = "; ".join(f"{f['clinic']} — {f['issue']}" for f in flags) or \
+        "No material anomalies were flagged this period."
+    rec = ("Rebalance peak-day demand at the over-capacity site and run targeted no-show outreach."
+           if flags else "Maintain current staffing; keep monitoring weekly utilization for drift.")
+    return (
+        f"## Operations summary — {start} to {end}\n\n"
+        f"Across all clinics, average provider utilization ran at **{(k['utilization'] or 0)*100:.1f}%** "
+        f"with a no-show rate of **{(k['no_show_rate'] or 0)*100:.1f}%**, an average wait of "
+        f"**{(k['avg_wait'] or 0):.1f} minutes**, and revenue per visit of **${(k['revenue_per_visit'] or 0):.0f}**. "
+        f"Mean patient satisfaction was **{(k['satisfaction'] or 0):.1f}/5**.\n\n"
+        f"**Key risks.** {risk}\n\n"
+        f"**Recommended intervention.** {rec}\n\n"
+        f"_Figures are aggregate operational indicators for decision support, not clinical measures._"
+    )
 
 
 @app.post("/api/generate-brief")
@@ -148,10 +173,19 @@ async def generate_brief(request: Request):
         f"satisfaction {data['kpis']['satisfaction']} of 5. Flagged issues: {flag_txt}. "
         f"Give 2-3 short paragraphs: what happened, the main risks, and one recommended intervention."
     )
-    narrative = await _run_agent(prompt, f"brief_{end}", "brief_generator")
+    # Never 500 on an LLM hiccup: fall back to a deterministic narrative so a brief always renders + saves.
+    try:
+        narrative = await _run_agent(prompt, f"brief_{start}_{end}", "brief_generator")
+        if not narrative.strip():
+            narrative = _fallback_narrative(start, end, data)
+    except Exception:
+        narrative = _fallback_narrative(start, end, data)
 
-    # Save server-side so history always populates (not reliant on the LLM calling a tool).
-    store_brief(end, narrative, {"start": start, "end": end, "kpis": data["kpis"], "flags": data["flags"]})
+    # Save server-side so history always populates (keyed by end date).
+    try:
+        store_brief(end, narrative, {"start": start, "end": end, "kpis": data["kpis"], "flags": data["flags"]})
+    except Exception:
+        pass
     audit_log("web", "brief_generated", {"start": start, "end": end, "flags": len(data["flags"])})
 
     return JSONResponse({"date": end, "narrative": narrative, **data, "disclaimer": DISCLAIMER})

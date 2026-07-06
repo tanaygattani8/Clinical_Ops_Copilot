@@ -35,6 +35,7 @@ def store_brief(date: str, brief_markdown: str, metadata: dict) -> None:
     _ensure_table()
     con = _get_connection()
     try:
+        con.execute("DELETE FROM brief_history WHERE date = ?", (date,))  # replace same-period brief
         con.execute(
             "INSERT INTO brief_history VALUES (?, ?, ?, ?)",
             (date, brief_markdown, json.dumps(metadata), datetime.datetime.utcnow())
