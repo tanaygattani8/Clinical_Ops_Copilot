@@ -113,19 +113,19 @@ def summary_stats(metric_name: str, start_date: str, end_date: str) -> dict:
         _enforce_minimum_n(count, "daily metric records")
         
         stats = con.execute("""
-            SELECT AVG(metric_value), MIN(metric_value), MAX(metric_value), COUNT(metric_value)
+            SELECT AVG(metric_value), MEDIAN(metric_value), MIN(metric_value), MAX(metric_value), COUNT(metric_value)
             FROM daily_metrics
             WHERE metric_name = ? AND date BETWEEN ? AND ?
         """, (metric_name, start_date, end_date)).fetchone()
-        
+
         return {
             "metric_name": metric_name,
             "period": f"{start_date} to {end_date}",
             "mean": stats[0],
-            "median": stats[0], # Fast approximation
-            "min": stats[1],
-            "max": stats[2],
-            "n": stats[3]
+            "median": stats[1],
+            "min": stats[2],
+            "max": stats[3],
+            "n": stats[4]
         }
     finally:
         con.close()

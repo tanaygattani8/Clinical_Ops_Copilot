@@ -1,141 +1,122 @@
 import os
-import asyncio
+import duckdb
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from agents.orchestrator import root_agent
 from agents._audit import audit_log, read_audit_log
-from rag.brief_history import retrieve_latest, retrieve_by_date
+from rag.brief_history import retrieve_latest, retrieve_by_date, store_brief
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
 app = FastAPI(title="Clinic Operations Copilot")
 
+_STATIC = os.path.join(os.path.dirname(__file__), "static")
+
+# Data spans calendar 2025; default the dashboard to Q1 2025.
+_DEFAULT_START = "2025-01-01"
+_DEFAULT_END = "2025-03-31"
+
 DISCLAIMER = (
-    "This report is for operational decision support only. "
-    "It does not constitute medical diagnosis, treatment recommendation, or clinical advice."
+    "For operational decision support only. "
+    "Not a medical diagnosis, treatment recommendation, or clinical advice."
 )
 
-HTML_PAGE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Clinic Operations Copilot</title>
-<style>
-body { margin: 0; font-family: Arial, Helvetica, sans-serif; background: #f5f5f5; color: #333; }
-.container { display: flex; height: calc(100vh - 40px); }
-.left { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #ddd; background: #fff; }
-.right { flex: 1; overflow-y: auto; padding: 16px; background: #fafafa; }
-.chat-header { padding: 12px 16px; background: #2c5282; color: #fff; font-size: 18px; font-weight: bold; }
-.chat-messages { flex: 1; overflow-y: auto; padding: 16px; }
-.chat-input-area { display: flex; padding: 12px; border-top: 1px solid #ddd; }
-.chat-input-area input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
-.chat-input-area button { margin-left: 8px; padding: 10px 20px; background: #2c5282; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
-.chat-input-area button:hover { background: #2b6cb0; }
-.msg { margin-bottom: 12px; padding: 8px 12px; border-radius: 6px; max-width: 80%; }
-.msg-user { background: #ebf4ff; margin-left: auto; text-align: right; }
-.msg-bot { background: #e2e8f0; }
-.brief-card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 12px; margin-bottom: 12px; }
-.brief-card h3 { margin: 0 0 8px 0; }
-footer { height: 40px; display: flex; align-items: center; justify-content: center; background: #2c5282; color: #fff; font-size: 12px; }
-</style>
-</head>
-<body>
-<div class="container">
-  <div class="left">
-    <div class="chat-header">Clinic Operations Copilot</div>
-    <div class="chat-messages" id="chatMessages"></div>
-    <div class="chat-input-area">
-      <input type="text" id="chatInput" placeholder="Ask about clinic operations..." />
-      <button id="sendBtn" onclick="sendMessage()">Send</button>
-    </div>
-  </div>
-  <div class="right">
-    <h2>Recent Briefs</h2>
-    <div id="briefsList"></div>
-  </div>
-</div>
-<footer>""" + DISCLAIMER + """</footer>
-<script>
-var sessionId = 'session_' + Date.now();
 
-async function sendMessage() {
-  var input = document.getElementById('chatInput');
-  var msg = input.value.trim();
-  if (!msg) return;
-  input.value = '';
-  appendMessage(msg, 'user');
-  document.getElementById('sendBtn').disabled = true;
-  try {
-    var res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg, session_id: sessionId})
-    });
-    var data = await res.json();
-    appendMessage(data.response || 'No response.', 'bot');
-  } catch(e) {
-    appendMessage('Error: ' + e.message, 'bot');
-  }
-  document.getElementById('sendBtn').disabled = false;
-}
-
-function appendMessage(text, sender) {
-  var div = document.createElement('div');
-  div.className = 'msg msg-' + sender;
-  div.textContent = text;
-  var container = document.getElementById('chatMessages');
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
-}
-
-document.getElementById('chatInput').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') sendMessage();
-});
-
-async function loadBriefs() {
-  try {
-    var res = await fetch('/api/briefs?n=5');
-    var data = await res.json();
-    var container = document.getElementById('briefsList');
-    container.innerHTML = '';
-    if (data.length === 0) {
-      container.innerHTML = '<p>No briefs generated yet.</p>';
-      return;
-    }
-    data.forEach(function(b) {
-      var card = document.createElement('div');
-      card.className = 'brief-card';
-      card.innerHTML = '<h3>' + b.date + '</h3><pre>' +
-        (b.brief_markdown || '').substring(0, 300) + '...</pre>';
-      card.style.cursor = 'pointer';
-      card.onclick = function() { viewBrief(b.date); };
-      container.appendChild(card);
-    });
-  } catch(e) {}
-}
-
-async function viewBrief(date) {
-  try {
-    var res = await fetch('/api/briefs/' + date);
-    var data = await res.json();
-    if (data && data.brief_markdown) {
-      var container = document.getElementById('briefsList');
-      container.innerHTML = '<button onclick="loadBriefs()">Back</button>' +
-        '<h3>Brief: ' + data.date + '</h3><pre>' + data.brief_markdown + '</pre>';
-    }
-  } catch(e) {}
-}
-
-loadBriefs();
-</script>
-</body>
-</html>"""
+def _con():
+    db_path = os.getenv("CLINIC_DB_PATH", "data/clinic.duckdb")
+    return duckdb.connect(db_path, read_only=True)
 
 
+# ── Static frontend ──
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTMLResponse(content=HTML_PAGE)
+    return FileResponse(os.path.join(_STATIC, "index.html"))
+
+
+# ── Fast SQL endpoints (no LLM) ──
+@app.get("/api/dashboard")
+async def dashboard(start: str = _DEFAULT_START, end: str = _DEFAULT_END):
+    con = _con()
+    try:
+        def metric_avg(name, table="daily_metrics", col="metric_value"):
+            row = con.execute(
+                f"SELECT AVG({col}) FROM {table} WHERE metric_name = ? AND date BETWEEN ? AND ?"
+                if table == "daily_metrics" else
+                f"SELECT AVG({col}) FROM {table} WHERE date BETWEEN ? AND ?",
+                ([name, start, end] if table == "daily_metrics" else [start, end]),
+            ).fetchone()[0]
+            return round(row, 4) if row is not None else None
+
+        kpis = {
+            "utilization": metric_avg("utilization"),
+            "no_show_rate": metric_avg("no_show_rate"),
+            "avg_wait": metric_avg("avg_wait"),
+            "revenue_per_visit": metric_avg("revenue_per_visit"),
+            "satisfaction": metric_avg(None, table="patient_satisfaction", col="score"),
+        }
+
+        # Anomaly flags: over-capacity utilization and high no-show clinics.
+        flags = []
+        util = con.execute(
+            "SELECT clinic_id, AVG(metric_value), MAX(metric_value) FROM daily_metrics "
+            "WHERE metric_name='utilization' AND date BETWEEN ? AND ? GROUP BY clinic_id "
+            "HAVING MAX(metric_value) > 1.10 ORDER BY clinic_id", [start, end]).fetchall()
+        for cid, avg, mx in util:
+            flags.append({"clinic": cid, "severity": "high",
+                          "issue": f"Utilization peaked at {mx*100:.0f}% (over capacity)"})
+        nos = con.execute(
+            "SELECT clinic_id, MAX(metric_value) FROM daily_metrics "
+            "WHERE metric_name='no_show_rate' AND date BETWEEN ? AND ? GROUP BY clinic_id "
+            "HAVING MAX(metric_value) > 0.30 ORDER BY clinic_id", [start, end]).fetchall()
+        for cid, mx in nos:
+            flags.append({"clinic": cid, "severity": "medium",
+                          "issue": f"No-show rate reached {mx*100:.0f}%"})
+
+        return JSONResponse({"start": start, "end": end, "kpis": kpis, "flags": flags})
+    finally:
+        con.close()
+
+
+@app.get("/api/metric/by-clinic")
+async def metric_by_clinic(metric: str = "utilization", start: str = _DEFAULT_START, end: str = _DEFAULT_END):
+    con = _con()
+    try:
+        rows = con.execute(
+            "SELECT clinic_id, AVG(metric_value) FROM daily_metrics "
+            "WHERE metric_name = ? AND date BETWEEN ? AND ? GROUP BY clinic_id ORDER BY clinic_id",
+            [metric, start, end]).fetchall()
+        return JSONResponse([{"clinic": r[0], "value": round(r[1], 4)} for r in rows])
+    finally:
+        con.close()
+
+
+@app.get("/api/metric/trend")
+async def metric_trend(metric: str = "utilization", start: str = _DEFAULT_START, end: str = _DEFAULT_END):
+    con = _con()
+    try:
+        rows = con.execute(
+            "SELECT date_trunc('week', date) AS wk, AVG(metric_value) FROM daily_metrics "
+            "WHERE metric_name = ? AND date BETWEEN ? AND ? GROUP BY wk ORDER BY wk",
+            [metric, start, end]).fetchall()
+        return JSONResponse([{"week": str(r[0]), "value": round(r[1], 4)} for r in rows])
+    finally:
+        con.close()
+
+
+# ── Agent-powered endpoints ──
+async def _run_agent(prompt: str, session_id: str, user_id: str) -> str:
+    runner = InMemoryRunner(agent=root_agent)
+    await runner.session_service.create_session(
+        app_name=runner.app_name, user_id=user_id, session_id=session_id
+    )
+    msg = types.Content(role="user", parts=[types.Part(text=prompt)])
+    text = ""
+    async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=msg):
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                if getattr(part, "text", None):
+                    text += part.text
+    return text
 
 
 @app.post("/api/chat")
@@ -143,34 +124,42 @@ async def chat(request: Request):
     body = await request.json()
     message = body.get("message", "")
     session_id = body.get("session_id", "default")
-
     audit_log("web", "chat_request", {"message_snippet": message[:120], "session_id": session_id})
-
-    runner = InMemoryRunner(agent=root_agent)
-    # ADK's run_async does not auto-create sessions; create it first.
-    await runner.session_service.create_session(
-        app_name=runner.app_name, user_id="web_user", session_id=session_id
-    )
-    user_msg = types.Content(role="user", parts=[types.Part(text=message)])
-
-    response_text = ""
-    async for event in runner.run_async(
-        user_id="web_user",
-        session_id=session_id,
-        new_message=user_msg
-    ):
-        if event.content and event.content.parts:
-            for part in event.content.parts:
-                if hasattr(part, "text") and part.text:
-                    response_text += part.text
-
+    response_text = await _run_agent(message, session_id, "web_user")
     return JSONResponse({"response": response_text, "session_id": session_id})
+
+
+@app.post("/api/generate-brief")
+async def generate_brief(request: Request):
+    body = await request.json()
+    start = body.get("start", _DEFAULT_START)
+    end = body.get("end", _DEFAULT_END)
+
+    # Deterministic data first (never depends on the model).
+    dash = await dashboard(start, end)
+    import json as _json
+    data = _json.loads(bytes(dash.body).decode())
+    flag_txt = "; ".join(f"{f['clinic']}: {f['issue']}" for f in data["flags"]) or "no anomalies detected"
+
+    prompt = (
+        f"Write a concise executive-brief narrative for clinic operations from {start} to {end}. "
+        f"Key metrics: utilization {data['kpis']['utilization']}, no-show rate {data['kpis']['no_show_rate']}, "
+        f"average wait {data['kpis']['avg_wait']} minutes, revenue per visit {data['kpis']['revenue_per_visit']}, "
+        f"satisfaction {data['kpis']['satisfaction']} of 5. Flagged issues: {flag_txt}. "
+        f"Give 2-3 short paragraphs: what happened, the main risks, and one recommended intervention."
+    )
+    narrative = await _run_agent(prompt, f"brief_{end}", "brief_generator")
+
+    # Save server-side so history always populates (not reliant on the LLM calling a tool).
+    store_brief(end, narrative, {"start": start, "end": end, "kpis": data["kpis"], "flags": data["flags"]})
+    audit_log("web", "brief_generated", {"start": start, "end": end, "flags": len(data["flags"])})
+
+    return JSONResponse({"date": end, "narrative": narrative, **data, "disclaimer": DISCLAIMER})
 
 
 @app.get("/api/briefs")
 async def list_briefs(n: int = 5):
-    briefs = retrieve_latest(n)
-    return JSONResponse(briefs)
+    return JSONResponse(retrieve_latest(n))
 
 
 @app.get("/api/briefs/{date}")
@@ -181,17 +170,9 @@ async def get_brief(date: str):
     return JSONResponse(brief)
 
 
-@app.post("/api/trigger-brief")
-async def trigger_brief():
-    from monitoring.loop import run_daily_brief
-    result = await run_daily_brief(force=True)
-    return JSONResponse(result)
-
-
 @app.get("/api/audit-log")
 async def get_audit_log(n: int = 50):
-    entries = read_audit_log(n)
-    return JSONResponse(entries)
+    return JSONResponse(read_audit_log(n))
 
 
 @app.get("/health")
