@@ -1,3 +1,13 @@
+"""Root orchestrator — the single entry point for every request.
+
+Design: this agent owns *routing only*, never analysis. It delegates to three
+specialists (ops_analyst / planner / narrator) so that each concern stays
+isolated and independently auditable. The guardrail runs as a `before_agent_callback`
+here, which guarantees Constitution Rule 1 (guardrail-first) structurally — no
+request can reach a sub-agent without passing it. For a full executive brief the
+order is fixed: gather data -> simulate -> narrate, so the narrator always writes
+from validated numbers rather than the raw prompt.
+"""
 from google.adk.agents import Agent
 from agents.guardrail import guardrail_callback
 from agents.ops_analyst import ops_analyst_agent
@@ -14,7 +24,9 @@ def after_orchestrator(callback_context):
     audit_log("orchestrator", "session_completed", {"session_id": callback_context.state.get("session_id", "default")})
     return None
 
-# Root Agent orchestration
+# Guardrail is wired as before_agent_callback (not a tool) so it CANNOT be skipped:
+# ADK runs it before the model on every invocation. after_orchestrator closes the
+# audit trail for the session (Constitution Rule 6: every action logged).
 root_agent = Agent(
     name="orchestrator",
     model=MODEL,

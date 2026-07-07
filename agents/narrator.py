@@ -1,3 +1,13 @@
+"""narrator — the writer, and deliberately NOT the checker.
+
+Composes the executive brief from `analyst_output` + `planner_output` in session
+state. Two design rules matter here: (1) it runs validate_all() and drops any
+out-of-range figure before writing, and (2) it is intentionally a *separate* agent
+from the groundedness evaluator that grades the finished brief (Constitution Rule 8:
+generator != evaluator). A writer that grades itself will pass itself; keeping the
+check external is what makes the numbers trustworthy. It also pulls the last few
+briefs from the RAG store so week-over-week issues carry forward.
+"""
 import os
 from google.adk.agents import Agent
 from google.adk.tools.mcp_tool import McpToolset, StdioConnectionParams

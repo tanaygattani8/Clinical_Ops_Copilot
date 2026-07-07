@@ -1,3 +1,12 @@
+"""ops_analyst — the data specialist.
+
+Reads the warehouse and turns raw rows into rates/comparisons. It reaches the
+DuckDB warehouse only through the clinic_warehouse MCP server (below), never with
+direct SQL in the agent, so the aggregates-of-5+ rule (Constitution Rule 2) is
+enforced at the tool boundary. Its result is published to session state under
+`output_key="analyst_output"`, which the narrator later reads — this is how data
+flows agent-to-agent without the orchestrator re-passing it by hand.
+"""
 import os
 from google.adk.agents import Agent
 from google.adk.tools.mcp_tool import McpToolset, StdioConnectionParams

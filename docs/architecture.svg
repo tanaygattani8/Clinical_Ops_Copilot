@@ -1,0 +1,57 @@
+<svg viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+  <rect width="1280" height="720" fill="#0f172a"/>
+  <defs>
+    <marker id="ah2" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#64748b"/></marker>
+  </defs>
+  <rect x="64" y="46" width="34" height="34" rx="8" fill="#14b8a6"/>
+  <text x="81" y="70" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">✚</text>
+  <text x="112" y="70" font-size="18" font-weight="600" fill="#e2e8f0">Clinic Ops Copilot</text>
+  <text x="64" y="130" font-size="40" font-weight="800" fill="#f1f5f9">Architecture</text>
+  <rect x="68" y="148" width="104" height="5" rx="2" fill="#14b8a6"/>
+  <rect x="1012" y="116" width="13" height="13" rx="3" fill="none" stroke="#14b8a6" stroke-width="2"/>
+  <text x="1032" y="127" font-size="13" fill="#94a3b8">trust layer</text>
+  <rect x="490" y="176" width="300" height="52" rx="10" fill="#1e293b" stroke="#334155"/>
+  <text x="640" y="201" text-anchor="middle" font-size="15" font-weight="600" fill="#e2e8f0">User → Web app</text>
+  <text x="640" y="218" text-anchor="middle" font-size="12" fill="#94a3b8">FastAPI + vanilla JS</text>
+  <line x1="640" y1="228" x2="640" y2="254" stroke="#64748b" marker-end="url(#ah2)"/>
+  <rect x="490" y="254" width="300" height="52" rx="10" fill="#1e293b" stroke="#14b8a6" stroke-width="2"/>
+  <text x="640" y="279" text-anchor="middle" font-size="15" font-weight="600" fill="#5eead4">① Guardrail</text>
+  <text x="640" y="296" text-anchor="middle" font-size="12" fill="#94a3b8">screens every request first</text>
+  <line x1="640" y1="306" x2="640" y2="332" stroke="#64748b" marker-end="url(#ah2)"/>
+  <rect x="490" y="332" width="300" height="52" rx="10" fill="#1e293b" stroke="#334155"/>
+  <text x="640" y="357" text-anchor="middle" font-size="15" font-weight="600" fill="#e2e8f0">② Orchestrator</text>
+  <text x="640" y="374" text-anchor="middle" font-size="12" fill="#94a3b8">Google ADK · routes work</text>
+  <line x1="640" y1="384" x2="400" y2="424" stroke="#64748b" marker-end="url(#ah2)"/>
+  <line x1="640" y1="384" x2="640" y2="424" stroke="#64748b" marker-end="url(#ah2)"/>
+  <line x1="640" y1="384" x2="880" y2="424" stroke="#64748b" marker-end="url(#ah2)"/>
+  <rect x="300" y="424" width="200" height="50" rx="10" fill="#1e293b" stroke="#334155"/>
+  <text x="400" y="447" text-anchor="middle" font-size="14" font-weight="600" fill="#e2e8f0">ops_analyst</text>
+  <text x="400" y="464" text-anchor="middle" font-size="11.5" fill="#94a3b8">analyzes metrics</text>
+  <rect x="540" y="424" width="200" height="50" rx="10" fill="#1e293b" stroke="#334155"/>
+  <text x="640" y="447" text-anchor="middle" font-size="14" font-weight="600" fill="#e2e8f0">planner</text>
+  <text x="640" y="464" text-anchor="middle" font-size="11.5" fill="#94a3b8">runs what-ifs</text>
+  <rect x="780" y="424" width="200" height="50" rx="10" fill="#1e293b" stroke="#334155"/>
+  <text x="880" y="447" text-anchor="middle" font-size="14" font-weight="600" fill="#e2e8f0">narrator</text>
+  <text x="880" y="464" text-anchor="middle" font-size="11.5" fill="#94a3b8">writes the brief</text>
+  <line x1="400" y1="474" x2="400" y2="500" stroke="#64748b" marker-end="url(#ah2)"/>
+  <line x1="640" y1="474" x2="640" y2="500" stroke="#64748b" marker-end="url(#ah2)"/>
+  <line x1="880" y1="474" x2="880" y2="500" stroke="#64748b" marker-end="url(#ah2)"/>
+  <rect x="300" y="500" width="200" height="58" rx="10" fill="#0b1220" stroke="#334155"/>
+  <text x="400" y="524" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e2e8f0">clinic_warehouse · MCP</text>
+  <text x="400" y="542" text-anchor="middle" font-size="11" fill="#94a3b8">DuckDB · aggregates 5+</text>
+  <rect x="540" y="500" width="200" height="58" rx="10" fill="#0b1220" stroke="#334155"/>
+  <text x="640" y="524" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e2e8f0">simulation_engine · MCP</text>
+  <text x="640" y="542" text-anchor="middle" font-size="11" fill="#94a3b8">what-ifs · PROJECTED</text>
+  <rect x="780" y="500" width="200" height="58" rx="10" fill="#0b1220" stroke="#334155"/>
+  <text x="880" y="524" text-anchor="middle" font-size="12.5" font-weight="600" fill="#e2e8f0">report_builder · MCP</text>
+  <text x="880" y="542" text-anchor="middle" font-size="11" fill="#94a3b8">+ validator · brief RAG</text>
+  <line x1="640" y1="558" x2="640" y2="598" stroke="#14b8a6" stroke-dasharray="4 3" marker-end="url(#ah2)"/>
+  <text x="652" y="582" font-size="11" fill="#94a3b8">every output →</text>
+  <rect x="290" y="598" width="330" height="54" rx="10" fill="#1e293b" stroke="#14b8a6" stroke-width="2"/>
+  <text x="455" y="621" text-anchor="middle" font-size="14.5" font-weight="600" fill="#5eead4">③ Groundedness evaluator</text>
+  <text x="455" y="639" text-anchor="middle" font-size="11.5" fill="#94a3b8">re-checks every number vs SQL</text>
+  <rect x="660" y="598" width="330" height="54" rx="10" fill="#1e293b" stroke="#14b8a6" stroke-width="2"/>
+  <text x="825" y="621" text-anchor="middle" font-size="14.5" font-weight="600" fill="#5eead4">Audit log · audit.jsonl</text>
+  <text x="825" y="639" text-anchor="middle" font-size="11.5" fill="#94a3b8">every action logged</text>
+  <text x="640" y="694" text-anchor="middle" font-size="13" fill="#64748b">DuckDB · 7-yr synthetic     ·     Hugging Face Spaces (Docker)     ·     Groq LLM — free</text>
+</svg>

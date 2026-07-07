@@ -1,3 +1,10 @@
+"""Output validator (Constitution Rule 4): every number is bounds-checked against a
+plausible range before it is allowed into a brief. This is a cheap, deterministic
+sanity gate — it catches impossible values (e.g. a 300% no-show rate from a bad
+join or an LLM slip) that the groundedness evaluator would otherwise have to catch
+downstream. Ranges are intentionally loose (utilization allows >100% for capacity
+pressure); the goal is to reject the absurd, not to second-guess the data."""
+
 METRIC_RANGES = {
     "no_show_rate":      (0.0, 1.0),
     "avg_wait":          (0.0, 300.0),

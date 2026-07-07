@@ -15,3 +15,12 @@ venv/
 data/*.duckdb
 data/*.duckdb.wal
 logs/*.jsonl
+
+# Local-only deliverables — not pushed (video lives on YouTube; slides/card are working assets)
+*.mp4
+video_assets/
+docs/card.html
+
+# Editor / tooling
+.claude/
+.agents/

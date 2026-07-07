@@ -11,3 +11,10 @@ data/*.duckdb
 data/*.duckdb.wal
 logs/*.jsonl
 .env
+
+# Local-only deliverables — never needed at runtime, keep them out of the image
+*.mp4
+video_assets/
+docs/
+.claude/
+.agents/

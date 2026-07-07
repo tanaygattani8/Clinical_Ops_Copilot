@@ -1,3 +1,11 @@
+"""planner — the what-if specialist.
+
+Runs staffing / schedule / no-show simulations via the simulation_engine MCP
+server. Every projection it returns is labeled PROJECTED (Constitution Rule 5):
+simulated numbers must never be mistakable for actual, measured data. Its output
+is published under `output_key="planner_output"` for the narrator to fold into
+the brief alongside the analyst's real figures.
+"""
 import os
 from google.adk.agents import Agent
 from google.adk.tools.mcp_tool import McpToolset, StdioConnectionParams

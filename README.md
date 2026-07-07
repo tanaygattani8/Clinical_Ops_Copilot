@@ -10,31 +10,47 @@ pinned: false
 
 # Clinic Operations Copilot
 
-A multi-agent healthcare-operations system built with **Google ADK** (Agent Development Kit) and **Gemini**. It turns a synthetic clinic data warehouse into compliance-safe executive briefs — flagging utilization spikes, no-show patterns, wait-time outliers, and staffing gaps, then projecting the impact of interventions.
+**Track: Agents for Business.** Clinic Operations Copilot is auditable operational intelligence for a clinic network — an enterprise problem where business impact *and* trust both matter. Built with **Google ADK** (Agent Development Kit) and the **Model Context Protocol**, it turns a data warehouse into compliance-safe executive briefs that quantify the money: flagging utilization spikes, no-show patterns, wait-time outliers, and staffing gaps, then projecting the ROI of interventions before a dollar is spent.
+
+**Live demo:** https://huggingface.co/spaces/tanaygattani/clinical-ops-copilot
 
 Built as the capstone for Google's *5-Day AI Agents Intensive (Vibe Coding)* course.
+
+## The problem
+
+A regional manager runs a dozen clinics. The data to spot a problem — a clinic whose no-shows are climbing, a provider whose wait times are drifting — already exists, but it's buried across thousands of daily rows. The hard part isn't the query; it's turning the numbers into a trustworthy, decision-ready brief without leaking patient data or inventing figures.
+
+## Why agents
+
+This isn't one task, it's a pipeline of distinct jobs: **screen** the request for safety, **pull and compute** the metrics, **simulate** a fix, **write** it up in plain English, and **verify** every number before it ships. Each job has different constraints, so each is a separate agent — and because generator and evaluator are different agents, the system can check its own work instead of trusting it.
 
 ## What it does
 
 - **Guardrail agent** screens every request first — no individual patient data, ever (aggregates of 5+ only).
-- **Ops Analyst agent** queries the warehouse, resolves date ranges, computes rates.
-- **Planner agent** runs what-if simulations, always labeled `PROJECTED`.
-- **Narrator agent** validates every number, compiles the brief, and appends a non-diagnostic disclaimer.
+- **Ops Analyst agent** (`ops_analyst`) queries the warehouse, resolves date ranges, computes rates.
+- **Planner agent** (`planner`) runs what-if simulations, always labeled `PROJECTED`.
+- **Narrator agent** (`narrator`) validates every number, compiles the brief, and appends a non-diagnostic disclaimer.
+- **Groundedness evaluator** re-derives every figure in a brief against SQL truth (deterministic, no LLM) and scores it — a separate check, so the writer never grades itself.
+- The web app surfaces a **live agent trace** and the groundedness score with each brief, and an **interactive simulator** to test interventions before spending a dollar.
 - A **monitoring loop** scans SQL directly (zero API cost) and only wakes the agents when it finds an anomaly.
-- A **FastAPI** web app serves a chat UI, recent briefs, and the audit trail.
+- A **FastAPI** web app serves the dashboard, executive briefs, the simulator, past briefs, and the audit trail — filterable by **clinic**, **year/quarter**, or a **custom date range**.
 
-Data is 100% synthetic (`data/seed.py`) — no real patient data is used.
+Data is 100% synthetic (`data/seed.py`) — **7 years** (2019–2025) across 12 clinics with seasonality, YoY growth, a 2020 COVID shock, and injected anomalies. No real patient data is used.
 
 ## Architecture
+
+![Clinic Ops architecture](docs/architecture.svg)
+
+Every request enters through the **guardrail**; the **orchestrator** (Google ADK) routes work to the three specialist agents, each backed by its own **MCP tool server** over stdio; and every output is re-checked by the **groundedness evaluator** and written to an append-only **audit log**.
 
 ```
 web/app.py ──► agents/orchestrator.py ──► guardrail (runs first)
                      │
-                     ├─► ops_analyst  ──► mcp_servers/clinic_warehouse.py  (DuckDB)
-                     ├─► planner      ──► mcp_servers/simulation_engine.py
-                     └─► narrator     ──► mcp_servers/report_builder.py
+                     ├─► ops_analyst  ──► mcp_servers/clinic_warehouse.py  (DuckDB · aggregates 5+)
+                     ├─► planner      ──► mcp_servers/simulation_engine.py (what-ifs · PROJECTED)
+                     └─► narrator     ──► mcp_servers/report_builder.py    (+ brief RAG)
                                           rag/brief_history.py  (past briefs)
-tools/       calculator · date_resolver · output_validator
+tools/       calculator · date_resolver · output_validator · groundedness (verifies every number)
 monitoring/  loop.py  (daily anomaly scan)
 ```
 
@@ -46,7 +62,7 @@ Compliance rules are enforced in code and listed in [CONSTITUTION.md](CONSTITUTI
 python -m venv .venv
 .venv/Scripts/activate        # Windows;  source .venv/bin/activate on macOS/Linux
 pip install .
-cp .env.example .env          # then paste your real GOOGLE_API_KEY into .env
+cp .env.example .env          # then paste your free GROQ_API_KEY into .env (get one at console.groq.com/keys)
 python data/seed.py           # builds data/clinic.duckdb
 uvicorn web.app:app --reload  # open http://localhost:8000
 ```
@@ -70,7 +86,7 @@ Hugging Face Spaces hosts the Docker container for free and gives a public URL t
 4. Push this project to the Space's git repo (URL shown on the Space page):
    ```bash
    git init && git add . && git commit -m "Clinic Ops Copilot"
-   git remote add space https://huggingface.co/spaces/YOUR_USERNAME/YOUR_SPACE_NAME
+   git remote add space https://huggingface.co/spaces/tanaygattani/clinical-ops-copilot
    git push space main
    ```
 5. Hugging Face builds the Dockerfile automatically and serves the app at your Space URL.
