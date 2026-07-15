@@ -14,8 +14,6 @@ pinned: false
 
 **Live demo:** https://huggingface.co/spaces/tanaygattani/clinical-ops-copilot
 
-Built as the capstone for Google's *5-Day AI Agents Intensive (Vibe Coding)* course.
-
 ## The problem
 
 A regional manager runs a dozen clinics. The data to spot a problem — a clinic whose no-shows are climbing, a provider whose wait times are drifting — already exists, but it's buried across thousands of daily rows. The hard part isn't the query; it's turning the numbers into a trustworthy, decision-ready brief without leaking patient data or inventing figures.
