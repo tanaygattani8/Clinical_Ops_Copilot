@@ -10,9 +10,11 @@ pinned: false
 
 # Clinic Operations Copilot
 
-**Track: Agents for Business.** Clinic Operations Copilot is auditable operational intelligence for a clinic network — an enterprise problem where business impact *and* trust both matter. Built with **Google ADK** (Agent Development Kit) and the **Model Context Protocol**, it turns a data warehouse into compliance-safe executive briefs that quantify the money: flagging utilization spikes, no-show patterns, wait-time outliers, and staffing gaps, then projecting the ROI of interventions before a dollar is spent.
+### ▶ **[Live demo — try it now](https://huggingface.co/spaces/tanaygattani/clinical-ops-copilot)**
 
-**Live demo:** https://huggingface.co/spaces/tanaygattani/clinical-ops-copilot
+`https://huggingface.co/spaces/tanaygattani/clinical-ops-copilot`
+
+**Track: Agents for Business.** Clinic Operations Copilot is auditable operational intelligence for a clinic network — an enterprise problem where business impact *and* trust both matter. Built with **Google ADK** (Agent Development Kit) and the **Model Context Protocol**, it turns a data warehouse into compliance-safe executive briefs that quantify the money: flagging utilization spikes, no-show patterns, wait-time outliers, and staffing gaps, then projecting the ROI of interventions before a dollar is spent.
 
 Built as the capstone for Google's *5-Day AI Agents Intensive (Vibe Coding)* course.
 

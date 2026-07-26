@@ -1,4 +1,5 @@
 import os
+import re
 import duckdb
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -197,6 +198,49 @@ async def _run_agent(prompt: str, session_id: str, user_id: str) -> str:
     return text
 
 
+def _retry_after_seconds(detail: str):
+    """Pull the wait hint out of a Groq 429 body ('try again in 8.5s' / 'retry after 12')."""
+    m = re.search(r"(?:try again in|retry[- ]after[\"':\s]*)\s*([0-9.]+)\s*(m|min|s|sec)?", detail, re.I)
+    if not m:
+        return None
+    secs = float(m.group(1))
+    if (m.group(2) or "s").lower().startswith("m"):
+        secs *= 60
+    return max(1, round(secs))
+
+
+def _explain_llm_error(e: Exception) -> str:
+    """Turn a raw provider exception into something a user can act on.
+
+    The previous version printed only `type(e).__name__`, which hid the provider's
+    actual message — including the rate-limit reset hint — and made live failures
+    undiagnosable without server logs. The full detail goes to the audit trail;
+    the user gets a plain-language version.
+    """
+    detail = str(e).strip()
+    kind = type(e).__name__
+    audit_log("web", "chat_error", {"error_type": kind, "detail": detail[:600]})
+
+    lowered = detail.lower()
+    if "rate limit" in lowered or "rate_limit" in lowered or "429" in lowered or kind == "RateLimitError":
+        wait = _retry_after_seconds(detail)
+        when = f"about {wait} second{'s' if wait != 1 else ''}" if wait else "roughly 30 seconds"
+        return (
+            f"⏳ Rate limit reached on the free Groq tier (12,000 tokens/minute). "
+            f"Each question runs several agents, so a fast back-and-forth can hit the cap. "
+            f"Please wait {when} and send it again — the dashboard, simulator and briefs "
+            f"keep working in the meantime."
+        )
+    if "invalid api key" in lowered or "authentication" in lowered or kind == "AuthenticationError":
+        return ("🔑 The model API key is missing or invalid. Set `GROQ_API_KEY` "
+                "(Space → Settings → Variables and secrets) and restart.")
+    if "context" in lowered and "length" in lowered:
+        return ("📏 That conversation grew past the model's context window. "
+                "Start a new chat or ask a narrower question.")
+    # Anything else: show the real message so the failure is diagnosable.
+    return f"⚠ The assistant hit an error ({kind}): {detail[:300]}"
+
+
 @app.post("/api/chat")
 async def chat(request: Request):
     body = await request.json()
@@ -208,8 +252,7 @@ async def chat(request: Request):
         if not response_text.strip():
             response_text = "I couldn't produce a response for that. Try rephrasing, or ask about a specific clinic/metric/period."
     except Exception as e:
-        response_text = (f"⚠ The assistant is temporarily unavailable ({type(e).__name__}). "
-                         "On the free tier this is usually a rate limit — wait a minute and retry.")
+        response_text = _explain_llm_error(e)
     return JSONResponse({"response": response_text, "session_id": session_id})
 
 

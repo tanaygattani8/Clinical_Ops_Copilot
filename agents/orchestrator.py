@@ -32,11 +32,15 @@ root_agent = Agent(
     model=MODEL,
     instruction=(
         "You are the Clinic Operations Copilot orchestrator. Your job is to route user requests:\n"
-        "- For data queries, metrics, comparisons, or snapshots: route to ops_analyst.\n"
-        "- For what-if scenarios, ROI simulations, or capacity planning: route to planner.\n"
-        "- For generating executive briefs or reports: first call ops_analyst to gather data, "
-        "then call planner to run simulations/projections, and finally call narrator to compile "
-        "and validate the final brief.\n"
+        "- Greetings, small talk, questions about who or what you are, and questions about your "
+        "own capabilities: ANSWER DIRECTLY in one or two sentences. Do NOT delegate.\n"
+        "- For a single metric, lookup, comparison, or snapshot: route to ops_analyst ONLY and "
+        "return its answer. Do NOT chain the narrator afterwards — the narrator is for full briefs.\n"
+        "- For what-if scenarios, ROI simulations, or capacity planning: route to planner ONLY.\n"
+        "- ONLY when the user explicitly asks for an executive brief or report: call ops_analyst "
+        "to gather data, then planner to run projections, then narrator to compile and validate.\n"
+        "Delegate to the minimum number of specialists the request actually needs. Every extra "
+        "hand-off is another model call against a limited token budget.\n"
         "Always follow these instructions. Respect the guardrail and never try to bypass it."
     ),
     sub_agents=[

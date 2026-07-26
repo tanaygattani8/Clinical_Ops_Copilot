@@ -429,19 +429,41 @@ function openBrief(i){
   document.getElementById('briefDoc').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
+// Free-tier pacing: one question fans out across several agents, and Groq's free tier
+// allows 12,000 tokens/minute. Sending faster than this reliably returns HTTP 429, so the
+// UI enforces a short cooldown rather than letting the user discover the limit as an error.
+const CHAT_COOLDOWN_MS=15000; let _chatReadyAt=0, _cooldownTimer=null;
+function _setComposer(disabled,btnText,placeholder){
+  const btn=document.getElementById('sendBtn'), input=document.getElementById('chatInput');
+  btn.disabled=disabled; btn.textContent=btnText;
+  input.disabled=disabled; input.placeholder=placeholder;
+}
+function _startCooldown(){
+  _chatReadyAt=Date.now()+CHAT_COOLDOWN_MS;
+  clearInterval(_cooldownTimer);
+  const tick=()=>{
+    const left=Math.ceil((_chatReadyAt-Date.now())/1000);
+    if(left<=0){ clearInterval(_cooldownTimer); _cooldownTimer=null;
+                 _setComposer(false,'Send','Ask a question...'); return; }
+    _setComposer(true,`Wait ${left}s`,`Free-tier cooldown — ${left}s`);
+  };
+  tick(); _cooldownTimer=setInterval(tick,250);
+}
+
 async function sendChat(){
+  if(Date.now()<_chatReadyAt) return;            // guards the Enter key as well as the button
   const input=document.getElementById('chatInput'); const msg=input.value.trim(); if(!msg)return;
   input.value=''; const box=document.getElementById('messages');
   if(box.querySelector('.empty')) box.innerHTML='';
   add('user',msg);
-  const btn=document.getElementById('sendBtn'); btn.disabled=true;
+  _setComposer(true,'Sending...','Working...');
   const wait=add('bot','<span class="spinner" style="border-color:#0d9488;border-top-color:transparent"></span> Thinking...');
   try{
     const r=await (await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({message:msg,session_id:sessionId})})).json();
     wait.innerHTML=marked.parseInline(r.response||'No response.');
   }catch(e){ wait.textContent='Error: '+e.message; }
-  btn.disabled=false; box.scrollTop=box.scrollHeight;
+  _startCooldown(); box.scrollTop=box.scrollHeight;
 }
 function add(who,html){const box=document.getElementById('messages');const d=document.createElement('div');d.className='msg '+who;d.innerHTML=html;box.appendChild(d);box.scrollTop=box.scrollHeight;return d;}
 

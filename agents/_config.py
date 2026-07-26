@@ -11,4 +11,14 @@ if _PROVIDER == "gemini":
 else:
     # Groq via ADK's LiteLLM adapter. Needs GROQ_API_KEY and the litellm package.
     from google.adk.models.lite_llm import LiteLlm
-    MODEL = LiteLlm(model=os.getenv("GROQ_MODEL", "groq/llama-3.3-70b-versatile"))
+
+    # Groq's free tier caps tokens-per-minute (12k TPM on llama-3.3-70b-versatile).
+    # A single user turn fans out across orchestrator + sub-agents, so a normal
+    # conversational pace can brush that ceiling and return HTTP 429. num_retries
+    # makes LiteLLM honor Groq's `retry-after` header and re-issue the call, turning
+    # a hard failure into a slightly slower answer. Extra kwargs are forwarded
+    # straight to litellm.acompletion by the ADK adapter.
+    MODEL = LiteLlm(
+        model=os.getenv("GROQ_MODEL", "groq/llama-3.3-70b-versatile"),
+        num_retries=int(os.getenv("LLM_NUM_RETRIES", "3")),
+    )
