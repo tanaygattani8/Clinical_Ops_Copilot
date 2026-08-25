@@ -16,6 +16,3 @@ logs/*.jsonl
 *.mp4
 video_assets/
 docs/
-.claude/
-.agents/
-CLAUDE.md

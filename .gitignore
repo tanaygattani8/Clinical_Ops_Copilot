@@ -20,8 +20,3 @@ logs/*.jsonl
 *.mp4
 video_assets/
 docs/card.html
-
-# Editor / tooling
-.claude/
-.agents/
-CLAUDE.md
