@@ -4,16 +4,19 @@ version = "0.1.0"
 description = "Clinic Operations Copilot Multi-Agent System"
 readme = "README.md"
 requires-python = ">=3.10"
+# Pinned deliberately. The Space rebuilds from this file, so an open range means a
+# fresh upstream release ships straight to production untested - google-adk 2.7
+# moved McpToolset and took the live demo down that way. Bump these on purpose.
 dependencies = [
-    "google-adk>=1.2.0",
-    "litellm>=1.60.0",
-    "duckdb>=1.3.0",
-    "mcp[cli]>=1.9.0",
-    "fastapi>=0.115.0",
-    "uvicorn>=0.34.0",
-    "httpx>=0.28.0",
-    "pytest>=8.0",
-    "pytest-asyncio>=0.25.0"
+    "google-adk==2.3.0",
+    "litellm>=1.60.0,<2",
+    "duckdb>=1.3.0,<2",
+    "mcp[cli]>=1.9.0,<2",
+    "fastapi>=0.115.0,<1",
+    "uvicorn>=0.34.0,<1",
+    "httpx>=0.28.0,<1",
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=0.25.0,<2"
 ]
 
 [build-system]
