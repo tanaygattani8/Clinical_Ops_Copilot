@@ -242,6 +242,9 @@ document.querySelectorAll('.nav a').forEach(a=>a.onclick=()=>{
 
 function reload(){ loadDashboard(); }
 
+// Stored briefs are replayed into innerHTML, so anything that came from a request
+// body is escaped on the way out.
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pct=v=>v==null?'—':(v*100).toFixed(1)+'%';
 const money=v=>v==null?'—':'$'+v.toFixed(0);
 
@@ -354,13 +357,13 @@ function grClass(s){ return s>=95?'good':s>=80?'warn':'bad'; }
 async function renderBrief(b){
   const doc=document.getElementById('briefDoc'); const k=b.kpis||{};
   const isClinic = b.clinic && b.clinic!=='all';
-  const scope = isClinic ? b.clinic : 'All clinics';
+  const scope = isClinic ? esc(b.clinic) : 'All clinics';
   const gr=b.groundedness;
   const badge = gr ? `<div><span class="badge ${grClass(gr.score)}">✓ Groundedness ${gr.score}% · ${gr.verified}/${gr.figures} figures verified vs SQL</span>${(gr.unverified&&gr.unverified.length)?`<div class="unverified">⚠ Unverified figures (not found in source data): ${gr.unverified.join(', ')}</div>`:''}</div>` : '';
-  const trace = (b.trace&&b.trace.length) ? `<details class="trace" open><summary>🔎 Agent trace — how this brief was produced</summary>${b.trace.map(t=>`<div class="step"><span class="a">${t.agent} · ${t.action}</span><span class="s">${t.status}</span></div>`).join('')}</details>` : '';
+  const trace = (b.trace&&b.trace.length) ? `<details class="trace" open><summary>🔎 Agent trace — how this brief was produced</summary>${b.trace.map(t=>`<div class="step"><span class="a">${esc(t.agent)} · ${esc(t.action)}</span><span class="s">${esc(t.status)}</span></div>`).join('')}</details>` : '';
   doc.innerHTML=`<div class="doc">
     <div class="head">
-      <div><h2>Executive brief</h2><div class="muted">${periodLabel(b.start,b.end)} · ${b.start} to ${b.end} · ${scope}</div>${badge}</div>
+      <div><h2>Executive brief</h2><div class="muted">${periodLabel(b.start,b.end)} · ${esc(b.start)} to ${esc(b.end)} · ${scope}</div>${badge}</div>
       <div style="display:flex;gap:8px">
         <button class="btn ghost" id="dlBrief">⬇ Download</button>
         <button class="btn ghost" onclick="window.print()">Export PDF</button>
@@ -412,12 +415,12 @@ async function loadBriefs(){
   _briefs=await (await fetch('/api/briefs?n=12')).json();
   list.innerHTML = _briefs.length ? _briefs.map((b,i)=>{
     const m=b.metadata||{};
-    const scope=(m.clinic&&m.clinic!=='all')?m.clinic:'All clinics';
+    const scope=(m.clinic&&m.clinic!=='all')?esc(m.clinic):'All clinics';
     const g=m.groundedness;
     return `<div class="briefcard" onclick="openBrief(${i})">
       <div class="d">${periodLabel(m.start,m.end)||b.date}</div>
       <div class="muted" style="font-size:12px;margin-top:2px">${scope}${g?` · <span style="color:#0f766e">✓ ${g.score}%</span>`:''}</div>
-      <div class="p">${(b.brief_markdown||'').replace(/[#*_>\`]/g,'').trim().slice(0,150)}…</div>
+      <div class="p">${esc((b.brief_markdown||'').replace(/[#*_>\`]/g,'').trim().slice(0,150))}…</div>
       <div style="margin-top:8px;font-size:12px;color:var(--accent)">Open →</div>
     </div>`;}).join('')
     : '<div class="empty">No briefs generated yet. Pick a period above and click “Generate executive brief”.</div>';

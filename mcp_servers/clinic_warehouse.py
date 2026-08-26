@@ -2,7 +2,7 @@ import os
 import duckdb
 from mcp.server.fastmcp import FastMCP
 
-# Load environment variables using stdlib parser (Ponytail style)
+# Minimal .env reader - avoids a dependency just to read five keys.
 def load_env():
     if os.path.exists(".env"):
         with open(".env") as f:
@@ -18,7 +18,9 @@ mcp = FastMCP("clinic_warehouse")
 
 def _get_connection():
     db_path = os.getenv("CLINIC_DB_PATH", "data/clinic.duckdb")
-    return duckdb.connect(db_path)
+    # Read-only: every tool here is a SELECT, and a read-write handle would clash
+    # with the web app's read-only connection to the same file.
+    return duckdb.connect(db_path, read_only=True)
 
 def _enforce_minimum_n(count: int, entity_name: str = "records"):
     """Enforces Constitution Rule 2: aggregates of 5+ only."""
@@ -200,6 +202,64 @@ def staffing_snapshot(clinic_id: str, date: str) -> dict:
             "clinic_id": clinic_id,
             "date": date,
             "staff": [{"role": r[0], "headcount": r[1], "fte": r[2]} for r in rows]
+        }
+    finally:
+        con.close()
+
+@mcp.tool()
+def brief_metrics(clinic_id: str, start_date: str, end_date: str) -> dict:
+    """Headline KPIs and anomaly flags for one executive brief.
+
+    Args:
+        clinic_id: Clinic ID (CLINIC_01 to CLINIC_10), or "all" to aggregate every clinic.
+        start_date: Start date (YYYY-MM-DD).
+        end_date: End date (YYYY-MM-DD).
+    """
+    cf, cp = (" AND clinic_id = ?", [clinic_id]) if clinic_id not in ("all", "", None) else ("", [])
+    con = _get_connection()
+    try:
+        # Rule 2 applies to the brief's own input, so a window too small to be an
+        # aggregate never reaches a narrative.
+        # Known limit: counts rows, not distinct entities - same grain the other tools use.
+        count = con.execute(
+            "SELECT COUNT(*) FROM daily_metrics WHERE date BETWEEN ? AND ?" + cf,
+            [start_date, end_date] + cp).fetchone()[0]
+        _enforce_minimum_n(count, "daily metric records")
+
+        def avg_metric(name):
+            r = con.execute(
+                "SELECT AVG(metric_value) FROM daily_metrics "
+                "WHERE metric_name = ? AND date BETWEEN ? AND ?" + cf,
+                [name, start_date, end_date] + cp).fetchone()[0]
+            return round(r, 4) if r is not None else None
+
+        sat = con.execute(
+            "SELECT AVG(score) FROM patient_satisfaction WHERE date BETWEEN ? AND ?" + cf,
+            [start_date, end_date] + cp).fetchone()[0]
+
+        flags = []
+        for metric, threshold, severity, tmpl in (
+            ("utilization", 1.10, "high", "Utilization peaked at {v:.0%} (over capacity)"),
+            ("no_show_rate", 0.30, "medium", "No-show rate reached {v:.0%}"),
+        ):
+            rows = con.execute(
+                "SELECT clinic_id, MAX(metric_value) FROM daily_metrics "
+                "WHERE metric_name = ? AND date BETWEEN ? AND ?" + cf +
+                " GROUP BY clinic_id HAVING MAX(metric_value) > ? ORDER BY clinic_id",
+                [metric, start_date, end_date] + cp + [threshold]).fetchall()
+            flags += [{"clinic": cid, "severity": severity, "issue": tmpl.format(v=mx)}
+                      for cid, mx in rows]
+
+        return {
+            "start": start_date, "end": end_date, "clinic": clinic_id,
+            "kpis": {
+                "utilization": avg_metric("utilization"),
+                "no_show_rate": avg_metric("no_show_rate"),
+                "avg_wait": avg_metric("avg_wait"),
+                "revenue_per_visit": avg_metric("revenue_per_visit"),
+                "satisfaction": round(sat, 4) if sat is not None else None,
+            },
+            "flags": flags,
         }
     finally:
         con.close()

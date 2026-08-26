@@ -8,7 +8,7 @@ from agents._audit import audit_log, read_audit_log
 from agents.guardrail import guardrail_check
 from tools.groundedness import check_groundedness
 from rag.brief_history import retrieve_latest, retrieve_by_date, store_brief
-from mcp_servers import simulation_engine
+from mcp_servers import clinic_warehouse, simulation_engine
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
@@ -282,13 +282,21 @@ async def generate_brief(request: Request):
     body = await request.json()
     start = body.get("start", _DEFAULT_START)
     end = body.get("end", _DEFAULT_END)
-    clinic = body.get("clinic", "all")
-    scope = "all clinics" if clinic in ("all", "", None) else clinic
+    clinic = body.get("clinic") or "all"
+    # start/end/clinic are the request's free-text fields. All three are stored with
+    # the brief and replayed to every later viewer, so they are checked at the door.
+    if not all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(d)) for d in (start, end)):
+        return JSONResponse({"error": "Dates must be YYYY-MM-DD."}, status_code=400)
+    if clinic != "all" and not re.fullmatch(r"CLINIC_\d{2}", str(clinic)):
+        return JSONResponse({"error": "Unknown clinic."}, status_code=400)
+    scope = "all clinics" if clinic == "all" else clinic
 
-    # Deterministic data first (never depends on the model).
-    dash = await dashboard(start, end, clinic)
-    import json as _json
-    data = _json.loads(bytes(dash.body).decode())
+    # Deterministic data first, read through the warehouse MCP tool so the brief
+    # inherits its Rule 2 minimum-n gate instead of querying the tables directly.
+    try:
+        data = clinic_warehouse.brief_metrics(clinic, start, end)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     flag_txt = "; ".join(f"{f['clinic']}: {f['issue']}" for f in data["flags"]) or "no anomalies detected"
 
     prompt = (
@@ -298,8 +306,15 @@ async def generate_brief(request: Request):
         f"satisfaction {data['kpis']['satisfaction']} of 5. Flagged issues: {flag_txt}. "
         f"Give 2-3 short paragraphs: what happened, the main risks, and one recommended intervention."
     )
-    # Guardrail runs first (Constitution Rule 1) — real ALLOW/BLOCK decision on this path too.
+    # Guardrail runs first (Constitution Rule 1) and its verdict is binding here:
+    # a BLOCK returns before any model call, and no brief is written.
     gd = guardrail_check(prompt)
+    if gd["decision"] == "BLOCK":
+        audit_log("web", "brief_blocked", {"clinic": clinic, "reason": gd["reason"]})
+        return JSONResponse(
+            {"error": gd["reason"],
+             "trace": [{"agent": "guardrail", "action": "screen request", "status": "BLOCK"}]},
+            status_code=403)
 
     # Never 500 on an LLM hiccup: fall back to a deterministic narrative so a brief always renders + saves.
     try:
@@ -316,7 +331,7 @@ async def generate_brief(request: Request):
 
     trace = [
         {"agent": "guardrail", "action": "screen request", "status": gd["decision"]},
-        {"agent": "ops_analyst", "action": "query warehouse (SQL)",
+        {"agent": "clinic_warehouse (MCP)", "action": "brief_metrics · minimum-n gate",
          "status": f"{len(data['flags'])} flags, 5 KPIs"},
         {"agent": "narrator", "action": "compose brief", "status": source},
         {"agent": "evaluator", "action": "groundedness check",

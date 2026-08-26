@@ -54,7 +54,9 @@ Every request flows through a **trust layer**:
 - **Guardrail** (runs first, no exceptions) — refuses anything that would expose
   individual records; only aggregates of 5+ pass.
 - **Orchestrator** (Google ADK) — routes work to the specialists.
-- **ops_analyst → clinic_warehouse (MCP)** — DuckDB queries, always aggregated.
+- **ops_analyst → clinic_warehouse (MCP)** — DuckDB queries, always aggregated. Chat
+  questions reach this through the orchestrator; briefs call the warehouse's
+  `brief_metrics` tool directly, so the figures exist before the model is invoked.
 - **planner → simulation_engine (MCP)** — what-if projections, always labeled `PROJECTED`.
 - **narrator → report_builder (MCP)** — compiles the brief, pulls prior briefs from a
   small RAG store for continuity, appends a non-diagnostic disclaimer.
@@ -74,8 +76,10 @@ generator≠evaluator, audit-everything, secrets-in-env-only, etc.).
 
 Most demo agents ask you to trust them. This one is built to be *checked*:
 
-- **Live agent trace** — the web app shows the actual sequence of agent steps behind each
-  brief, so the multi-agent system is visible, not a black box.
+- **Live agent trace** — each brief carries the actual sequence of steps that produced it,
+  naming the real component at each stage (guardrail verdict, the MCP tool that returned
+  the figures, whether the model or the deterministic fallback wrote the prose, the
+  groundedness result). It reports what ran, not a fixed script.
 - **Groundedness score** — every brief ships with a score and a per-figure verified/
   unverified breakdown, computed independently of the writer.
 - **Interactive simulator** — test a staffing, scheduling, or no-show intervention and see
@@ -87,7 +91,7 @@ Most demo agents ask you to trust them. This one is built to be *checked*:
   LiteLLM adapter for the model.
 - **Model Context Protocol** — 3 FastMCP tool servers (warehouse, simulator, report builder)
   over stdio.
-- **DuckDB** — a 7-year (2019–2025) synthetic warehouse across 12 clinics with per-clinic
+- **DuckDB** — a 7-year (2019–2025) synthetic warehouse across 10 clinics with per-clinic
   profiles, seasonality, YoY growth, a 2020 COVID shock, and injected anomalies. Seeded via
   a bulk CSV `COPY` load for speed.
 - **Groq (Llama 3.3 70B)** via LiteLLM — LLM inference on a free tier, no credit card

@@ -35,22 +35,32 @@ This isn't one task, it's a pipeline of distinct jobs: **screen** the request fo
 - A **monitoring loop** scans SQL directly (zero API cost) and only wakes the agents when it finds an anomaly.
 - A **FastAPI** web app serves the dashboard, executive briefs, the simulator, past briefs, and the audit trail — filterable by **clinic**, **year/quarter**, or a **custom date range**.
 
-Data is 100% synthetic (`data/seed.py`) — **7 years** (2019–2025) across 12 clinics with seasonality, YoY growth, a 2020 COVID shock, and injected anomalies. No real patient data is used.
+Data is 100% synthetic (`data/seed.py`) — **7 years** (2019–2025) across 10 clinics with seasonality, YoY growth, a 2020 COVID shock, and injected anomalies. No real patient data is used.
 
 ## Architecture
 
 ![Clinic Ops architecture](docs/architecture.svg)
 
-Every request enters through the **guardrail**; the **orchestrator** (Google ADK) routes work to the three specialist agents, each backed by its own **MCP tool server** over stdio; and every output is re-checked by the **groundedness evaluator** and written to an append-only **audit log**.
+Every request enters through the **guardrail**; work is routed to MCP tool servers over stdio; and every brief is re-checked by the **groundedness evaluator** and written to an append-only **audit log**.
+
+There are two paths, and they are deliberately different. Open-ended questions go through the ADK orchestrator, which picks specialists. Briefs take a fixed, cheaper route — the figures are retrieved by a warehouse MCP tool *before* the model is called, so the LLM narrates numbers it cannot invent and the brief costs one model call instead of a multi-agent fan-out.
 
 ```
+Chat  /api/chat
 web/app.py ──► agents/orchestrator.py ──► guardrail (runs first)
                      │
                      ├─► ops_analyst  ──► mcp_servers/clinic_warehouse.py  (DuckDB · aggregates 5+)
                      ├─► planner      ──► mcp_servers/simulation_engine.py (what-ifs · PROJECTED)
                      └─► narrator     ──► mcp_servers/report_builder.py    (+ brief RAG)
-                                          rag/brief_history.py  (past briefs)
-tools/       calculator · date_resolver · output_validator · groundedness (verifies every number)
+
+Brief /api/generate-brief
+web/app.py ──► guardrail (binding: BLOCK returns 403, no model call)
+           ──► clinic_warehouse.brief_metrics()   (MCP tool · aggregates 5+)
+           ──► narrator                            (narrates the retrieved figures)
+           ──► tools/groundedness.py               (independent check)
+           ──► rag/brief_history.py                (stored + audit-logged)
+
+tools/       calculator · date_resolver · output_validator · groundedness
 monitoring/  loop.py  (daily anomaly scan)
 ```
 

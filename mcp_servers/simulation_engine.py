@@ -2,7 +2,7 @@ import os
 import duckdb
 from mcp.server.fastmcp import FastMCP
 
-# Load environment variables using stdlib parser (Ponytail style)
+# Minimal .env reader - avoids a dependency just to read five keys.
 def load_env():
     if os.path.exists(".env"):
         with open(".env") as f:
