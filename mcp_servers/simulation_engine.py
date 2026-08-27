@@ -59,16 +59,19 @@ def project_staffing(baseline: dict, role: str, delta: int, horizon_days: int) -
 
 def project_schedule(baseline: dict, slot_duration_minutes: int, slots_per_day: int, horizon_days: int) -> dict:
     """Pure projection math for a schedule change. See simulate_schedule_change for semantics."""
-    # Shorter slot duration increases daily capacity but might increase wait time if utilization is high
+    # capacity_factor > 1 means more appointments served per day. Against unchanged
+    # demand that shortens the queue and leaves more slots idle, so wait and
+    # utilization both fall. Multiplying wait here had extra capacity making
+    # patients wait longer.
     capacity_factor = (30.0 / slot_duration_minutes) * (slots_per_day / 20.0)
-    proj_capacity = int(slots_per_day * horizon_days)
-    proj_wait = max(2.0, baseline["wait_time"] * capacity_factor)
-    proj_util = min(1.0, baseline["utilization"] * (1.0 / capacity_factor))
+    proj_wait = max(2.0, baseline["wait_time"] / capacity_factor)
+    proj_util = min(1.0, baseline["utilization"] / capacity_factor)
 
     return {
         "scenario": f"schedule_change_slot_{slot_duration_minutes}_mins",
         "projected_metrics": {
-            "daily_capacity": proj_capacity,
+            "daily_capacity": slots_per_day,
+            "horizon_capacity": int(slots_per_day * horizon_days),
             "wait_time": round(proj_wait, 1),
             "utilization": round(proj_util, 2)
         },
@@ -155,7 +158,8 @@ def _selfcheck():
 
     sched = project_schedule(baseline, 15, 30, 30)
     assert sched["label"] == "PROJECTED"
-    assert sched["projected_metrics"]["daily_capacity"] == 30 * 30
+    assert sched["projected_metrics"]["daily_capacity"] == 30
+    assert sched["projected_metrics"]["horizon_capacity"] == 30 * 30
 
     noshow = project_noshow(baseline, "sms_reminders", 0.25, 30)
     assert noshow["label"] == "PROJECTED"

@@ -40,3 +40,19 @@ def test_simulate_noshow_intervention():
     assert "projected_metrics" in res
     assert "no_show_rate" in res["projected_metrics"]
     assert "revenue_impact" in res["projected_metrics"]
+
+
+def test_more_capacity_shortens_the_wait():
+    # The projection multiplied wait by the capacity factor, so adding capacity
+    # was reported as making patients wait longer.
+    from mcp_servers.simulation_engine import project_schedule
+    base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.15}
+    more = project_schedule(base, 15, 30, 30)["projected_metrics"]
+    less = project_schedule(base, 60, 10, 30)["projected_metrics"]
+    same = project_schedule(base, 30, 20, 30)["projected_metrics"]
+
+    assert more["wait_time"] < base["wait_time"] < less["wait_time"]
+    assert more["utilization"] < base["utilization"]
+    assert same["wait_time"] == base["wait_time"]
+    # daily_capacity must be per-day, not the whole horizon.
+    assert more["daily_capacity"] == 30 and more["horizon_capacity"] == 900

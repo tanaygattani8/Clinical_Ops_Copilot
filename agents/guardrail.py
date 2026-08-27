@@ -16,7 +16,11 @@ from agents._audit import audit_log
 # Patterns that indicate a request for individual patient data or clinical diagnosis
 _BLOCK_PATTERNS = [
     r"\bpatient\s+(id|#|number)\b",
-    r"\bpatient\s+\w+\s+\w+\b",          # "patient John Smith"
+    # A named individual. The name part is case-SENSITIVE (scoped (?-i:...)), so
+    # ordinary aggregate phrasing - "patient satisfaction", "patient wait times" -
+    # is not caught; the lookahead covers the title-cased spelling of those too.
+    r"\bpatient\s+(?!(?:satisfaction|wait|visit|volume|count|survey|no)\b)"
+    r"(?-i:[A-Z][a-z]+\s+[A-Z][a-z]+)",
     r"\b(diagnosis|diagnose|diagnoses)\b",
     r"\btreatment\s+(plan|recommendation)\b",
     r"\bprescri(be|ption)\b",

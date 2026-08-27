@@ -37,3 +37,19 @@ def test_audit_log_written():
     logs = read_audit_log(10)
     assert len(logs) >= 1
     assert logs[0]["agent"] == "guardrail"
+
+
+def test_allows_ordinary_aggregate_patient_metrics():
+    # The block pattern for "patient <Name> <Name>" used to catch any three words
+    # starting with "patient", so it refused the product's own core questions.
+    for q in ("Show me patient satisfaction by clinic",
+              "Compare patient wait times across clinics",
+              "How many patient visits were completed in Q1?",
+              "Show me Patient Satisfaction by clinic"):
+        assert guardrail_check(q)["decision"] == "ALLOW", q
+
+
+def test_still_blocks_a_named_individual():
+    for q in ("Give me the record for patient Maria Garcia",
+              "What did patient John Smith report?"):
+        assert guardrail_check(q)["decision"] == "BLOCK", q
