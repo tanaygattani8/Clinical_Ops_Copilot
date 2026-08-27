@@ -1,11 +1,18 @@
 import datetime
+import os
 import re
+
+# The warehouse holds 2019-2025. Anchoring "last month" to the real today lands
+# outside that range and returns an empty window, which the warehouse then reports
+# as an insufficient-data privacy refusal - a confusing answer to what is really
+# just a gap in the data. Clamp the anchor to the last day the warehouse covers.
+DATA_END = os.getenv("CLINIC_DATA_END", "2025-12-31")
 
 
 def _anchor(anchor_date: str) -> datetime.date:
     if anchor_date:
         return datetime.date.fromisoformat(anchor_date)
-    return datetime.date.today()
+    return min(datetime.date.today(), datetime.date.fromisoformat(DATA_END))
 
 
 def resolve_date_range(reference: str, anchor_date: str = "") -> dict:

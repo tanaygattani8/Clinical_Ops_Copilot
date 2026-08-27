@@ -31,17 +31,31 @@ def _load_baseline(con, clinic_id: str) -> dict:
         WHERE clinic_id = ?
     """, (clinic_id,)).fetchone()
     
+    # No rows means the clinic id is unknown or has no metrics. Substituting
+    # plausible-looking constants here made a projection off invented data
+    # indistinguishable from a real one - and `or` also swallowed a genuine 0.0.
+    if row is None or row[0] is None:
+        raise ValueError(f"No metrics found for clinic '{clinic_id}'; cannot project from an empty baseline.")
     return {
-        "wait_time": row[0] or 15.0,
-        "utilization": row[1] or 0.80,
-        "no_show_rate": row[2] or 0.15
+        "wait_time": row[0],
+        "utilization": row[1],
+        "no_show_rate": row[2]
     }
+
+# Roles do not move the queue equally: a physician adds appointment capacity
+# directly, a nurse partially, an admin barely touches clinical throughput.
+# Rough weights, but the role was previously accepted and then ignored, so two
+# very different plans produced identical projections.
+_ROLE_WEIGHT = {"physician": 1.0, "nurse": 0.6, "admin": 0.2}
+
 
 def project_staffing(baseline: dict, role: str, delta: int, horizon_days: int) -> dict:
     """Pure projection math for a staffing change. See simulate_staffing_change for semantics."""
+    if abs(delta) > 50:
+        raise ValueError(f"delta {delta} is outside the supported range of -50..50")
     # Simple linear projection model:
     # Adding a physician/nurse decreases wait time and increases capacity
-    factor = 0.05 * delta
+    factor = 0.05 * delta * _ROLE_WEIGHT.get(role.lower(), 0.5)
     proj_wait = max(2.0, baseline["wait_time"] * (1.0 - factor))
     proj_util = min(1.5, max(0.2, baseline["utilization"] * (1.0 - factor * 0.5)))
     proj_throughput = int(30 * horizon_days * (1.0 + factor * 0.3))
@@ -53,7 +67,10 @@ def project_staffing(baseline: dict, role: str, delta: int, horizon_days: int) -
             "utilization": round(proj_util, 2),
             "throughput": proj_throughput
         },
-        "confidence_interval": [0.85, 0.95],
+        # No confidence interval is published. This is a linear heuristic, not a
+        # fitted model, and the fixed [0.85, 0.95] that used to sit here was a
+        # made-up statistic dressed in statistical language.
+        "model": "linear heuristic, not a fitted statistical model",
         "label": "PROJECTED"
     }
 
@@ -80,6 +97,13 @@ def project_schedule(baseline: dict, slot_duration_minutes: int, slots_per_day: 
 
 def project_noshow(baseline: dict, intervention: str, expected_reduction_pct: float, horizon_days: int) -> dict:
     """Pure projection math for a no-show intervention. See simulate_noshow_intervention for semantics."""
+    # A fraction, not percentage points. Passing 15 for "15%" used to be accepted
+    # and drove the projection to absurd numbers, so say so rather than guessing
+    # which unit the caller meant.
+    if not 0.0 <= expected_reduction_pct <= 1.0:
+        raise ValueError(
+            f"expected_reduction_pct must be a fraction between 0 and 1 "
+            f"(got {expected_reduction_pct}; use 0.15 for 15%)")
     # Reducing no-shows reduces the no-show rate, increases slot utilization, and increases revenue
     proj_no_show = max(0.01, baseline["no_show_rate"] * (1.0 - expected_reduction_pct))
     revenue_gain = 150.0 * (baseline["no_show_rate"] - proj_no_show) * 15 * horizon_days

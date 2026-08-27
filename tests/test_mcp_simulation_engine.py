@@ -56,3 +56,26 @@ def test_more_capacity_shortens_the_wait():
     assert same["wait_time"] == base["wait_time"]
     # daily_capacity must be per-day, not the whole horizon.
     assert more["daily_capacity"] == 30 and more["horizon_capacity"] == 900
+
+
+def test_role_changes_the_projection():
+    from mcp_servers.simulation_engine import project_staffing
+    base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.15}
+    physician = project_staffing(base, "physician", 2, 30)["projected_metrics"]["wait_time"]
+    admin = project_staffing(base, "admin", 2, 30)["projected_metrics"]["wait_time"]
+    assert physician < admin, "adding a physician should relieve the queue more than an admin"
+
+
+def test_no_fabricated_confidence_interval_is_published():
+    from mcp_servers.simulation_engine import project_staffing
+    base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.15}
+    assert "confidence_interval" not in project_staffing(base, "nurse", 1, 30)
+
+
+def test_reduction_must_be_a_fraction():
+    import pytest
+    from mcp_servers.simulation_engine import project_noshow
+    base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.15}
+    with pytest.raises(ValueError):
+        project_noshow(base, "sms", 15, 30)          # 15 meaning "15%" is ambiguous
+    assert project_noshow(base, "sms", 0.15, 30)["label"] == "PROJECTED"

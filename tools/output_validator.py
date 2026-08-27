@@ -10,6 +10,7 @@ METRIC_RANGES = {
     "avg_wait":          (0.0, 300.0),
     "utilization":       (0.0, 1.5),   # allow over 100% (capacity pressure)
     "revenue_per_visit": (0.0, 10000.0),
+    "satisfaction":      (0.0, 5.0),   # the key the KPI dict actually uses
     "satisfaction_score": (0.0, 5.0),
     "patient_satisfaction": (0.0, 5.0),
 }
@@ -37,17 +38,23 @@ def validate_brief_section(section: dict) -> dict:
     """
     title = section.get("title", "unknown")
     data = section.get("data", {})
-    issues = []
+    issues, unchecked = [], []
 
     for metric_name, value in data.items():
         if not isinstance(value, (int, float)):
             continue
-        if metric_name in METRIC_RANGES:
-            lo, hi = METRIC_RANGES[metric_name]
-            if not (lo <= value <= hi):
-                issues.append(f"{metric_name}={value} out of range [{lo}, {hi}]")
+        if metric_name not in METRIC_RANGES:
+            # A name with no range was previously waved through as valid, so the
+            # docstring's "every number is bounds-checked" was not true. Report it
+            # instead: unchecked is not the same as checked-and-fine.
+            unchecked.append(metric_name)
+            continue
+        lo, hi = METRIC_RANGES[metric_name]
+        if not (lo <= value <= hi):
+            issues.append(f"{metric_name}={value} out of range [{lo}, {hi}]")
 
-    return {"section_title": title, "valid": len(issues) == 0, "issues": issues}
+    return {"section_title": title, "valid": len(issues) == 0,
+            "issues": issues, "unchecked": unchecked}
 
 
 def validate_all(sections: list) -> dict:
@@ -62,5 +69,7 @@ def validate_all(sections: list) -> dict:
         "all_valid": len(failed) == 0,
         "total_sections": len(sections),
         "failed_sections": failed,
+        "issues": [i for d in details for i in d["issues"]],
+        "unchecked_metrics": sorted({m for d in details for m in d["unchecked"]}),
         "details": details
     }

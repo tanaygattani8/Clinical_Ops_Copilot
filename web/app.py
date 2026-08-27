@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import duckdb
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -7,6 +8,7 @@ from agents.orchestrator import root_agent
 from agents._audit import audit_log, read_audit_log
 from agents.guardrail import guardrail_check
 from tools.groundedness import check_groundedness
+from tools.output_validator import validate_all
 from rag.brief_history import retrieve_latest, retrieve_by_date, store_brief
 from mcp_servers import clinic_warehouse, simulation_engine
 from google.adk.runners import InMemoryRunner
@@ -29,6 +31,47 @@ DISCLAIMER = (
 def _con():
     db_path = os.getenv("CLINIC_DB_PATH", "data/clinic.duckdb")
     return duckdb.connect(db_path, read_only=True)
+
+
+# Constitution Rule 2: a group built from fewer than this many records can identify
+# the people in it, so it is never returned.
+MIN_GROUP_N = 5
+
+# The whole deployment shares one model key, so one caller in a loop can spend
+# everyone else's quota. Fixed window per client, counted in-process.
+# Known limit: single container only - a second replica gets its own allowance.
+_RATE_LIMIT, _RATE_WINDOW_S = 12, 60
+_hits: dict = {}
+
+
+def _rate_limited(request: Request, bucket: str) -> bool:
+    now = time.time()
+    key = (request.client.host if request.client else "unknown", bucket)
+    if len(_hits) > 4096:      # bound memory; worst case a few callers get a fresh allowance
+        _hits.clear()
+    recent = [t for t in _hits.get(key, []) if now - t < _RATE_WINDOW_S]
+    _hits[key] = recent + [now]
+    return len(recent) >= _RATE_LIMIT
+
+
+async def _json_body(request: Request) -> dict:
+    """Request bodies come from the network; malformed input is a 400, not a 500."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise ValueError("Request body must be valid JSON.")
+    if not isinstance(body, dict):
+        raise ValueError("Request body must be a JSON object.")
+    return body
+
+
+def _clean_text(body: dict, field: str, max_len: int = 2000) -> str:
+    value = body.get(field, "")
+    if not isinstance(value, str):
+        raise ValueError(f"'{field}' must be a string.")
+    if len(value) > max_len:
+        raise ValueError(f"'{field}' is too long ({len(value)} chars, max {max_len}).")
+    return value
 
 
 # ── Static frontend ──
@@ -126,10 +169,14 @@ async def clinic_appointments(clinic: str, group_by: str = "status",
         return JSONResponse({"error": "group_by must be 'status' or 'provider_id'"}, status_code=400)
     con = _con()
     try:
+        # Rule 2 applies to the grain actually returned. Checking a total and then
+        # returning per-provider groups let a one-appointment provider through,
+        # which is exactly the re-identification this rule exists to stop.
         rows = con.execute(
             f"SELECT {group_by}, COUNT(*), AVG(wait_minutes) FROM appointments "
-            "WHERE clinic_id = ? AND date BETWEEN ? AND ? GROUP BY 1 ORDER BY 1",
-            [clinic, start, end]).fetchall()
+            "WHERE clinic_id = ? AND date BETWEEN ? AND ? "
+            "GROUP BY 1 HAVING COUNT(*) >= ? ORDER BY 1",
+            [clinic, start, end, MIN_GROUP_N]).fetchall()
         return JSONResponse([{"key": r[0], "count": r[1],
                               "avg_wait": round(r[2], 1) if r[2] is not None else None} for r in rows])
     finally:
@@ -140,10 +187,12 @@ async def clinic_appointments(clinic: str, group_by: str = "status",
 async def clinic_satisfaction(clinic: str, start: str = _DEFAULT_START, end: str = _DEFAULT_END):
     con = _con()
     try:
+        # Rule 2: survey categories with a handful of responses are identifying.
         rows = con.execute(
             "SELECT category, AVG(score), COUNT(*) FROM patient_satisfaction "
-            "WHERE clinic_id = ? AND date BETWEEN ? AND ? GROUP BY 1 ORDER BY 1",
-            [clinic, start, end]).fetchall()
+            "WHERE clinic_id = ? AND date BETWEEN ? AND ? "
+            "GROUP BY 1 HAVING COUNT(*) >= ? ORDER BY 1",
+            [clinic, start, end, MIN_GROUP_N]).fetchall()
         return JSONResponse([{"category": r[0], "score": round(r[1], 2), "n": r[2]} for r in rows])
     finally:
         con.close()
@@ -161,10 +210,15 @@ _SIM_PROJECTORS = {
 
 @app.post("/api/simulate")
 async def simulate(request: Request):
-    body = await request.json()
+    try:
+        body = await _json_body(request)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     clinic = body.get("clinic", "")
     scenario = body.get("scenario", "")
     params = body.get("params", {})
+    if not isinstance(params, dict):
+        return JSONResponse({"error": "'params' must be a JSON object."}, status_code=400)
 
     if scenario not in _SIM_PROJECTORS:  # whitelist: scenario picks the projector to run
         return JSONResponse({"error": "scenario must be one of: staffing, schedule, noshow"}, status_code=400)
@@ -179,7 +233,9 @@ async def simulate(request: Request):
         con.close()
 
     audit_log("web", "simulation_run", {"clinic": clinic, "scenario": scenario, "params": params})
-    return JSONResponse({"clinic": clinic, "scenario": scenario, "baseline": baseline, "projected": projected})
+    # Rule 3: the disclaimer travels with every output surface, not just briefs.
+    return JSONResponse({"clinic": clinic, "scenario": scenario, "baseline": baseline,
+                         "projected": projected, "disclaimer": DISCLAIMER})
 
 
 # ── Agent-powered endpoints ──
@@ -243,9 +299,17 @@ def _explain_llm_error(e: Exception) -> str:
 
 @app.post("/api/chat")
 async def chat(request: Request):
-    body = await request.json()
-    message = body.get("message", "")
-    session_id = body.get("session_id", "default")
+    try:
+        body = await _json_body(request)
+        message = _clean_text(body, "message")
+        session_id = _clean_text(body, "session_id", max_len=128) or "default"
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    if _rate_limited(request, "chat"):
+        return JSONResponse(
+            {"response": f"⏳ Too many requests. This demo allows {_RATE_LIMIT} messages "
+                         f"per minute so one visitor cannot exhaust the shared model quota.",
+             "session_id": session_id, "disclaimer": DISCLAIMER}, status_code=429)
     audit_log("web", "chat_request", {"message_snippet": message[:120], "session_id": session_id})
     try:
         response_text = await _run_agent(message, session_id, "web_user")
@@ -253,7 +317,9 @@ async def chat(request: Request):
             response_text = "I couldn't produce a response for that. Try rephrasing, or ask about a specific clinic/metric/period."
     except Exception as e:
         response_text = _explain_llm_error(e)
-    return JSONResponse({"response": response_text, "session_id": session_id})
+    # Rule 3: non-diagnostic disclaimer on every output, chat included.
+    return JSONResponse({"response": response_text, "session_id": session_id,
+                         "disclaimer": DISCLAIMER})
 
 
 def _fallback_narrative(start: str, end: str, data: dict) -> str:
@@ -279,7 +345,13 @@ def _fallback_narrative(start: str, end: str, data: dict) -> str:
 
 @app.post("/api/generate-brief")
 async def generate_brief(request: Request):
-    body = await request.json()
+    try:
+        body = await _json_body(request)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    if _rate_limited(request, "brief"):
+        return JSONResponse({"error": f"Too many requests - this demo allows {_RATE_LIMIT} "
+                                      f"brief generations per minute."}, status_code=429)
     start = body.get("start", _DEFAULT_START)
     end = body.get("end", _DEFAULT_END)
     clinic = body.get("clinic") or "all"
@@ -297,6 +369,17 @@ async def generate_brief(request: Request):
         data = clinic_warehouse.brief_metrics(clinic, start, end)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+
+    # Constitution Rule 4: the validator runs before any number enters a brief.
+    # It was only ever registered as a tool the narrator could choose to call, so
+    # on this path nothing was bounds-checked. Absurd values stop here.
+    validation = validate_all([{"title": "kpis", "data": data["kpis"]}])
+    if not validation["all_valid"]:
+        audit_log("web", "brief_rejected_by_validator",
+                  {"clinic": clinic, "start": start, "end": end, "issues": validation["issues"]})
+        return JSONResponse({"error": "Source data failed validation; no brief was generated.",
+                             "issues": validation["issues"]}, status_code=422)
+
     flag_txt = "; ".join(f"{f['clinic']}: {f['issue']}" for f in data["flags"]) or "no anomalies detected"
 
     prompt = (
@@ -333,6 +416,10 @@ async def generate_brief(request: Request):
         {"agent": "guardrail", "action": "screen request", "status": gd["decision"]},
         {"agent": "clinic_warehouse (MCP)", "action": "brief_metrics · minimum-n gate",
          "status": f"{len(data['flags'])} flags, 5 KPIs"},
+        {"agent": "output_validator", "action": "bounds-check every figure",
+         "status": f"{validation['total_sections']} section(s) valid"
+                   + (f", unchecked: {', '.join(validation['unchecked_metrics'])}"
+                      if validation["unchecked_metrics"] else "")},
         {"agent": "narrator", "action": "compose brief", "status": source},
         {"agent": "evaluator", "action": "groundedness check",
          "status": f"{grounded['score']}% · {grounded['verified']}/{grounded['figures']} figures verified"},
@@ -366,9 +453,30 @@ async def get_brief(date: str):
     return JSONResponse(brief)
 
 
+# The audit trail records what users typed, why a request was blocked, and raw
+# provider errors. The endpoint is public and unauthenticated, so only the
+# non-identifying shape of each event is published: who acted, what they did, and
+# counts. Anything free-text stays on disk for a compliance reviewer.
+_PUBLIC_DETAIL_KEYS = {
+    "decision", "action", "scenario", "clinic", "start", "end", "date",
+    "flags", "groundedness", "score", "session_id", "error_type", "status",
+}
+
+
+def _public_entry(entry: dict) -> dict:
+    details = entry.get("details") or {}
+    safe = {k: v for k, v in details.items() if k in _PUBLIC_DETAIL_KEYS}
+    redacted = sorted(set(details) - set(safe))
+    if redacted:
+        safe["redacted_fields"] = redacted
+    return {"timestamp": entry.get("timestamp"), "agent": entry.get("agent"),
+            "action": entry.get("action"), "details": safe}
+
+
 @app.get("/api/audit-log")
 async def get_audit_log(n: int = 50):
-    return JSONResponse(read_audit_log(n))
+    n = max(1, min(int(n), 200))
+    return JSONResponse([_public_entry(e) for e in read_audit_log(n)])
 
 
 @app.get("/health")

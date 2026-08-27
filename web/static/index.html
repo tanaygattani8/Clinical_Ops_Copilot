@@ -156,6 +156,8 @@
             <input id="chatInput" placeholder="Ask a question..." onkeydown="if(event.key==='Enter')sendChat()">
             <button class="btn" id="sendBtn" onclick="sendChat()">Send</button>
           </div>
+          <!-- Rule 3: the disclaimer is shown on this surface too, not just briefs. -->
+          <div class="disclaimer" id="chatDisclaimer"></div>
         </div>
       </section>
 
@@ -468,7 +470,9 @@ async function sendChat(){
   }catch(e){ wait.textContent='Error: '+e.message; }
   _startCooldown(); box.scrollTop=box.scrollHeight;
 }
-function add(who,html){const box=document.getElementById('messages');const d=document.createElement('div');d.className='msg '+who;d.innerHTML=html;box.appendChild(d);box.scrollTop=box.scrollHeight;return d;}
+function add(who,html){
+  const d=document.getElementById('chatDisclaimer');
+  if(d && !d.textContent) d.textContent='⚠ '+DISCLAIMER;const box=document.getElementById('messages');const d=document.createElement('div');d.className='msg '+who;d.innerHTML=html;box.appendChild(d);box.scrollTop=box.scrollHeight;return d;}
 
 async function loadAudit(){
   const rows=await (await fetch('/api/audit-log?n=60')).json();
@@ -552,7 +556,8 @@ function renderSimResults(r){
       </div>
     </div>
     ${extra?`<div class="kpis" style="grid-template-columns:repeat(2,1fr)">${extra}</div>`:''}
-    <div class="panel"><h3>Wait time: baseline vs projected</h3><canvas id="cSim" height="110"></canvas></div>`;
+    <div class="panel"><h3>Wait time: baseline vs projected</h3><canvas id="cSim" height="110"></canvas></div>
+    <div class="disclaimer">&#9888; ${esc(r.disclaimer || DISCLAIMER)}</div>`;
   bar('cSim',['Baseline','Projected'],[+b.wait_time.toFixed(1),+waitAfter.toFixed(1)],['#94a3b8','#0d9488'],'m');
 }
 

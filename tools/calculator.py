@@ -12,6 +12,12 @@ _OPS = {
 }
 
 
+# ** grows fast enough to hang the process before any error can be raised
+# (9**9**9 never returns), and this runs in-process inside the web app. Clinic
+# arithmetic never needs a large exponent.
+_MAX_EXPONENT = 64
+
+
 def _safe_eval(node):
     if isinstance(node, ast.Constant):
         return node.value
@@ -19,7 +25,10 @@ def _safe_eval(node):
         op = type(node.op)
         if op not in _OPS:
             raise ValueError(f"Unsupported operator: {op}")
-        return _OPS[op](_safe_eval(node.left), _safe_eval(node.right))
+        left, right = _safe_eval(node.left), _safe_eval(node.right)
+        if op is ast.Pow and abs(right) > _MAX_EXPONENT:
+            raise ValueError(f"Exponent {right} exceeds the maximum of {_MAX_EXPONENT}")
+        return _OPS[op](left, right)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
         return -_safe_eval(node.operand)
     raise ValueError(f"Unsupported expression type: {type(node)}")

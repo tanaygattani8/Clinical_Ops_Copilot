@@ -26,3 +26,15 @@ def test_validate_all_partial_failure():
     assert res["all_valid"] is False
     assert "Bad" in res["failed_sections"]
     assert len(res["failed_sections"]) == 1
+
+
+def test_satisfaction_key_is_actually_checked():
+    # The KPI dict uses "satisfaction"; only "satisfaction_score" had a range, so
+    # the app's own satisfaction figure was never bounds-checked.
+    res = validate_all([{"title": "kpis", "data": {"satisfaction": 9.9}}])
+    assert res["all_valid"] is False
+
+
+def test_unknown_metric_is_reported_not_silently_passed():
+    res = validate_all([{"title": "kpis", "data": {"mystery_metric": 42.0}}])
+    assert "mystery_metric" in res["unchecked_metrics"]

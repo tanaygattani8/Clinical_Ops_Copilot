@@ -26,3 +26,10 @@ def test_division_by_zero_returns_error():
     assert res["validated"] is False
     assert "error" in res
     assert res["result"] is None
+
+
+def test_exponent_bomb_is_refused_not_evaluated():
+    # 9**9**9 never returns; the tool runs in-process inside the web app.
+    res = calculate("9**9**9", "dos attempt")
+    assert res["validated"] is False and "xponent" in res["error"]
+    assert calculate("2**10", "ordinary power")["result"] == 1024.0

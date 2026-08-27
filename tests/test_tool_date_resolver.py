@@ -26,3 +26,11 @@ def test_invalid_reference_no_exception():
     res = resolve_date_range("invalid_gibberish")
     assert "error" in res
     assert res["start_date"] is None
+
+
+def test_relative_dates_land_inside_the_warehouse_range():
+    # Anchoring to the real today returns an empty window the warehouse then
+    # reports as a privacy refusal, which is a confusing answer to a data gap.
+    from tools.date_resolver import DATA_END
+    for ref in ("last week", "last month", "past 30 days"):
+        assert resolve_date_range(ref)["end_date"] <= DATA_END, ref
