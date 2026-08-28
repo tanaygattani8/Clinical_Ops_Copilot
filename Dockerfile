@@ -16,9 +16,10 @@ ENV CLINIC_DB_PATH=/tmp/clinic.duckdb
 ENV LOG_PATH=/tmp/logs/audit.jsonl
 # Use the Gemini Developer API (AI Studio key), not Vertex AI.
 ENV GOOGLE_GENAI_USE_VERTEXAI=FALSE
-# Drop root: nothing here needs it, and /tmp stays writable for any uid.
-RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+# Running as root is a real finding, but the obvious fix is not portable here:
+# `useradd --uid 1000 appuser` failed the Hugging Face build, and iterating on a
+# uid collision against a live demo is not worth the downtime. Revisit with a
+# reproducible local `docker build` that can show the actual useradd error.
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD python -c "import urllib.request,os,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.getenv('PORT','8080')+'/health',timeout=4).status==200 else 1)"
