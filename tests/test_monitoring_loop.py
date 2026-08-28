@@ -17,6 +17,22 @@ from agents._audit import read_audit_log
 import duckdb
 
 
+_LOG = "logs/test_monitoring_audit.jsonl"
+
+
+@pytest.fixture(autouse=True)
+def _own_log_path():
+    """Claim LOG_PATH per test. Setting it at import time is a shared global that
+    whichever module imported last silently won."""
+    previous = os.environ.get("LOG_PATH")
+    os.environ["LOG_PATH"] = _LOG
+    yield
+    if previous is None:
+        os.environ.pop("LOG_PATH", None)
+    else:
+        os.environ["LOG_PATH"] = previous
+
+
 @pytest.fixture(scope="module", autouse=True)
 def setup_test_db():
     """Copy the main seeded DB instead of re-seeding from scratch."""

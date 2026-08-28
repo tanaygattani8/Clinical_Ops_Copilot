@@ -47,3 +47,11 @@ def test_disclaimer_always_present():
     res = build_executive_brief("Test Brief", "2025-01-01", [section], "")
     assert DISCLAIMER in res["brief_markdown"]
     assert DISCLAIMER.split()[1] in res["brief_html"]  # partial match in HTML
+
+
+def test_caller_supplied_disclaimer_is_appended_not_dropped():
+    # The parameter was accepted, documented, and then ignored entirely.
+    from mcp_servers.report_builder import build_executive_brief, DISCLAIMER
+    out = build_executive_brief("T", "2025-01-01", [], "Reviewed by Compliance.")
+    assert "Reviewed by Compliance." in out["brief_markdown"]
+    assert out["brief_markdown"].startswith(DISCLAIMER)

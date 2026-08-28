@@ -18,7 +18,7 @@ app = FastAPI(title="Clinic Operations Copilot")
 
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
 
-# Data spans calendar 2025; default the dashboard to Q1 2025.
+# The warehouse spans 2019-2025; the dashboard opens on Q1 2025.
 _DEFAULT_START = "2025-01-01"
 _DEFAULT_END = "2025-03-31"
 
@@ -225,7 +225,9 @@ async def simulate(request: Request):
 
     con = _con()
     try:
-        baseline = simulation_engine._load_baseline(con, clinic)
+        # Honour the period the user picked instead of averaging all seven years.
+        baseline = simulation_engine._load_baseline(
+            con, clinic, body.get("start", ""), body.get("end", ""))
         projected = _SIM_PROJECTORS[scenario](baseline, params)
     except Exception as e:
         return JSONResponse({"error": f"simulation failed ({type(e).__name__}): {e}"}, status_code=400)
@@ -256,12 +258,13 @@ async def _run_agent(prompt: str, session_id: str, user_id: str) -> str:
 
 def _retry_after_seconds(detail: str):
     """Pull the wait hint out of a Groq 429 body ('try again in 8.5s' / 'retry after 12')."""
-    m = re.search(r"(?:try again in|retry[- ]after[\"':\s]*)\s*([0-9.]+)\s*(m|min|s|sec)?", detail, re.I)
-    if not m:
+    m = re.search(r"(?:try again in|retry[- ]after[\"':\s]*)\s*"
+                  r"(?:([0-9.]+)\s*(?:m|min)[a-z]*\s*)?([0-9.]+)?\s*(s|sec)?", detail, re.I)
+    if not m or not (m.group(1) or m.group(2)):
         return None
-    secs = float(m.group(1))
-    if (m.group(2) or "s").lower().startswith("m"):
-        secs *= 60
+    # "1m30.5s" carries both parts; reading only the first number told the user to
+    # retry 30 seconds early, straight into another 429.
+    secs = float(m.group(1) or 0) * 60 + float(m.group(2) or 0)
     return max(1, round(secs))
 
 
@@ -482,3 +485,20 @@ async def get_audit_log(n: int = 50):
 @app.get("/health")
 async def health():
     return JSONResponse({"status": "healthy"})
+
+
+@app.on_event("startup")
+async def _start_monitoring():
+    """Run the daily anomaly scan in the background when enabled.
+
+    Off by default: the scan itself is pure SQL and free, but finding an anomaly
+    wakes the agents, and an unattended deployment should opt into spending model
+    tokens rather than discover it. Set MONITORING_ENABLED=1 to turn it on.
+    """
+    if os.getenv("MONITORING_ENABLED", "").lower() not in ("1", "true", "yes"):
+        return
+    import asyncio
+    from monitoring.loop import start_scheduler
+    interval = int(os.getenv("MONITORING_INTERVAL_SECONDS", "86400"))
+    asyncio.create_task(start_scheduler(interval))
+    audit_log("web", "monitoring_started", {"interval_seconds": interval})

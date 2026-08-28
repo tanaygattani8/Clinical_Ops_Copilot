@@ -25,8 +25,10 @@ def _render_html_section(title: str, data: dict, commentary: str) -> str:
     return f"<h2>{title}</h2><table>{rows}</table>{note}"
 
 
-def _inject_disclaimer(content: str) -> str:
-    return f"{DISCLAIMER}\n\n{content}"
+def _inject_disclaimer(content: str, extra: str = "") -> str:
+    """Rule 3 text always leads; a caller's extra clause is appended, never swapped in."""
+    header = f"{DISCLAIMER} {extra.strip()}".strip() if extra and extra.strip() else DISCLAIMER
+    return f"{header}\n\n{content}"
 
 
 @mcp.tool()
@@ -61,7 +63,8 @@ def build_executive_brief(title: str, date: str, sections: list, disclaimer: str
         body_parts.append("")
 
     body_md = "\n".join(body_parts)
-    brief_md = _inject_disclaimer(body_md)
+    # The disclaimer argument was accepted, documented, and then dropped.
+    brief_md = _inject_disclaimer(body_md, disclaimer)
 
     # HTML version
     html_sections = "".join(s.get("section_html", "") for s in sections)

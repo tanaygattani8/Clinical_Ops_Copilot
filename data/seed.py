@@ -168,6 +168,8 @@ def _generate_appointments(con) -> None:
         season = _season(d)
         covid = _covid(d)
 
+        weekday = d.weekday()
+
         for cid, p in PROFILES.items():
             base = 12 * p["volume"] * _year_factor(d, 0.03) * (1 + 0.15 * season)
             if covid:
@@ -175,16 +177,31 @@ def _generate_appointments(con) -> None:
             # min 6 keeps every clinic-day an aggregate of 5+ (privacy rule).
             num_appts = max(6, int(random.gauss(base, 2)))
 
-            statuses = (["completed"] * 4 + ["no_show", "cancelled"]) if not covid \
-                else (["completed"] * 2 + ["no_show", "no_show", "cancelled"])
+            # Draw status and wait from the SAME model _generate_daily_metrics uses.
+            # These used to be a flat 1-in-6 no-show and a wait that ignored the
+            # clinic profile, so the two tables described different clinics: the
+            # dashboard and the appointment drill-down disagreed by up to 54%,
+            # and the seeded CLINIC_03 anomaly was missing here entirely.
+            if cid == "CLINIC_03" and weekday == 0:      # anomaly: Monday no-shows
+                no_show_p = random.uniform(0.38, 0.42)
+            else:
+                no_show_p = p["no_show"] + 0.03 * max(0.0, season) + random.uniform(-0.03, 0.03)
+                if covid:
+                    no_show_p += 0.12
+                no_show_p = _clamp(no_show_p, 0.04, 0.35)
+            cancel_p = 0.05
+            day_wait = _clamp(p["wait"] + 3 * season + random.uniform(-3, 3), 5, 40)
 
             for _ in range(num_appts):
                 provider_id = f"PROVIDER_{random.randint(1, 10):02d}"
-                status = random.choice(statuses)
-                if provider_id == "PROVIDER_07":  # anomaly: chronically long waits
-                    wait = 15 + random.randint(20, 30)
-                else:
-                    wait = max(2, int(15 + 3 * season + random.randint(-8, 8)))
+                roll = random.random()
+                status = ("no_show" if roll < no_show_p
+                          else "cancelled" if roll < no_show_p + cancel_p
+                          else "completed")
+                # PROVIDER_07 keeps its long-wait anomaly; the other nine sit slightly
+                # below the daily mean so the blend still lands on day_wait.
+                centre = day_wait + 22 if provider_id == "PROVIDER_07" else day_wait - 2.5
+                wait = max(2, int(random.gauss(centre, 3)))
                 appts.append((f"APPT_{counter:07d}", d, cid, provider_id, status, wait))
                 counter += 1
 
@@ -220,7 +237,9 @@ def _generate_satisfaction(con) -> None:
         for cid, p in PROFILES.items():
             # CLINIC_05 runs chronically lower (anomaly); winter (busy) dips everyone slightly.
             mean = (3.3 if cid == "CLINIC_05" else p["sat"]) - 0.08 * season
-            for _ in range(random.randint(1, 4)):
+            # 5-12 responses a day keeps every clinic-day above the aggregate-of-5
+            # floor, so the privacy rule never has to blank an ordinary chart.
+            for _ in range(random.randint(5, 12)):
                 category = random.choice(["overall", "wait_time", "provider", "facility"])
                 score = round(_clamp(random.gauss(mean, 0.4), 1.0, 5.0), 1)
                 surveys.append((f"SRV_{counter:07d}", d, cid, score, category))

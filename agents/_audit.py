@@ -5,7 +5,11 @@ import datetime
 
 def _log_path() -> str:
     path = os.getenv("LOG_PATH", "logs/audit.jsonl")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # dirname("audit.jsonl") is "", and makedirs("") raises - so a bare filename
+    # took down every endpoint that logs.
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
     return path
 
 

@@ -76,29 +76,13 @@ def retrieve_by_date(date: str) -> dict:
     con = _get_connection()
     try:
         row = con.execute(
-            "SELECT date, brief_markdown, metadata FROM brief_history WHERE date = ? LIMIT 1", (date,)
+            # One row per (date, clinic), so without an order this returned an
+            # arbitrary clinic's brief for a shared date.
+            "SELECT date, brief_markdown, metadata FROM brief_history "
+            "WHERE date = ? ORDER BY created_at DESC LIMIT 1", (date,)
         ).fetchone()
         if row is None:
             return None
         return {"date": str(row[0]), "brief_markdown": row[1], "metadata": json.loads(row[2]) if row[2] else {}}
-    finally:
-        con.close()
-
-
-def search_briefs(query: str, n: int = 3) -> list:
-    """Simple text search over stored briefs.
-
-    Args:
-        query: Search string.
-        n: Maximum number of results.
-    """
-    _ensure_table()
-    con = _get_connection()
-    try:
-        rows = con.execute(
-            "SELECT date, brief_markdown, metadata FROM brief_history WHERE brief_markdown LIKE ? ORDER BY created_at DESC LIMIT ?",
-            (f"%{query}%", n)
-        ).fetchall()
-        return [{"date": str(r[0]), "brief_markdown": r[1], "metadata": json.loads(r[2]) if r[2] else {}} for r in rows]
     finally:
         con.close()

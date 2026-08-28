@@ -54,30 +54,30 @@ def guardrail_check(user_message: str) -> dict:
     return {"decision": "ALLOW", "reason": "No prohibited content detected."}
 
 
+def _user_text(callback_context) -> str:
+    """Pull the user's message text out of the ADK callback context.
+
+    Reads the parts properly rather than stringifying the Content object. The old
+    path looked up a "_messages" state key that ADK does not set, so it always came
+    back empty and fell through to str(user_content) - which happened to contain
+    the text inside a repr, meaning the guardrail was screening a debug string.
+    """
+    content = getattr(callback_context, "user_content", None)
+    parts = getattr(content, "parts", None) or []
+    text = " ".join(p.text for p in parts if getattr(p, "text", None))
+    if text.strip():
+        return text
+    # Last resort: never screen nothing. An empty string matches no pattern and
+    # would silently ALLOW, so fall back to the object's text form.
+    return str(content) if content is not None else ""
+
+
 def guardrail_callback(callback_context) -> Optional[object]:
-    """ADK before_model_callback — blocks prohibited requests before reaching the LLM.
+    """ADK before_agent_callback — blocks prohibited requests before reaching the LLM.
 
     Returns a Content object to short-circuit the pipeline, or None to allow through.
     """
-    # Extract the latest user message text
-    user_text = ""
-    try:
-        for content in callback_context.state.get("_messages", []):
-            if hasattr(content, "parts"):
-                for part in content.parts:
-                    if hasattr(part, "text") and part.text:
-                        user_text += part.text + " "
-    except Exception:
-        pass
-
-    # Fallback: try direct attribute access (ADK version-dependent)
-    if not user_text:
-        try:
-            user_text = str(callback_context.user_content) or ""
-        except Exception:
-            user_text = ""
-
-    result = guardrail_check(user_text)
+    result = guardrail_check(_user_text(callback_context))
 
     if result["decision"] == "BLOCK":
         # Import here to avoid circular imports at module load

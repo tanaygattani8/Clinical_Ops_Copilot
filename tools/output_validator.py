@@ -49,9 +49,9 @@ def validate_brief_section(section: dict) -> dict:
             # instead: unchecked is not the same as checked-and-fine.
             unchecked.append(metric_name)
             continue
-        lo, hi = METRIC_RANGES[metric_name]
-        if not (lo <= value <= hi):
-            issues.append(f"{metric_name}={value} out of range [{lo}, {hi}]")
+        check = validate_metric(metric_name, value, METRIC_RANGES[metric_name])
+        if not check["valid"]:
+            issues.append(f"{metric_name}={value} {check['reason'].split(' is ')[-1]}")
 
     return {"section_title": title, "valid": len(issues) == 0,
             "issues": issues, "unchecked": unchecked}

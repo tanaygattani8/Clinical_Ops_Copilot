@@ -1,6 +1,6 @@
 import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from rag.metrics_catalog import load_metrics_catalog, lookup_metric, get_metrics_by_category
+from rag.metrics_catalog import load_metrics_catalog, lookup_metric
 
 def test_load_catalog():
     cat = load_metrics_catalog()
@@ -15,7 +15,3 @@ def test_lookup_existing():
 def test_lookup_nonexistent():
     m = lookup_metric("does_not_exist")
     assert m is None
-
-def test_get_by_category():
-    res = get_metrics_by_category("efficiency")
-    assert len(res) >= 2

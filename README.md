@@ -32,7 +32,9 @@ This isn't one task, it's a pipeline of distinct jobs: **screen** the request fo
 - **Narrator agent** (`narrator`) validates every number, compiles the brief, and appends a non-diagnostic disclaimer.
 - **Groundedness evaluator** re-derives every figure in a brief against SQL truth (deterministic, no LLM) and scores it — a separate check, so the writer never grades itself.
 - The web app surfaces a **live agent trace** and the groundedness score with each brief, and an **interactive simulator** to test interventions before spending a dollar.
-- A **monitoring loop** scans SQL directly (zero API cost) and only wakes the agents when it finds an anomaly.
+- A **monitoring loop** scans SQL directly (zero API cost) and only wakes the agents
+  when it finds an anomaly. Opt-in: set `MONITORING_ENABLED=1` (it spends model tokens
+  when it fires), or run it once with `python monitoring/loop.py`.
 - A **FastAPI** web app serves the dashboard, executive briefs, the simulator, past briefs, and the audit trail — filterable by **clinic**, **year/quarter**, or a **custom date range**.
 
 Data is 100% synthetic (`data/seed.py`) — **7 years** (2019–2025) across 10 clinics with seasonality, YoY growth, a 2020 COVID shock, and injected anomalies. No real patient data is used.
@@ -93,12 +95,14 @@ Hugging Face Spaces hosts the Docker container for free and gives a public URL t
    - `GROQ_API_KEY` = your free key from [console.groq.com/keys](https://console.groq.com/keys)
 
    (The app defaults to Groq. To use Gemini instead, add a `LLM_PROVIDER=gemini` variable and a `GOOGLE_API_KEY` secret.)
-4. Push this project to the Space's git repo (URL shown on the Space page):
+4. Push this project to **your own** Space's git repo (the URL is shown on your
+   Space page — the one below is this project's, and you cannot push to it):
    ```bash
-   git init && git add . && git commit -m "Clinic Ops Copilot"
-   git remote add space https://huggingface.co/spaces/tanaygattani/clinical-ops-copilot
+   git remote add space https://huggingface.co/spaces/<your-username>/<your-space>
    git push space main
    ```
+   Starting from a fresh copy rather than a clone? Run `git init -b main`, then
+   `git add . && git commit -m "Clinic Ops Copilot"` before the two commands above.
 5. Hugging Face builds the Dockerfile automatically and serves the app at your Space URL.
 
 The container seeds its synthetic DB at startup into `/tmp` (writable, ephemeral) — no persistent storage needed.

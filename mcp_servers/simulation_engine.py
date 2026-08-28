@@ -4,13 +4,22 @@ from mcp.server.fastmcp import FastMCP
 
 # Minimal .env reader - avoids a dependency just to read five keys.
 def load_env():
-    if os.path.exists(".env"):
-        with open(".env") as f:
-            for line in f:
-                if line.strip() and not line.startswith("#"):
-                    parts = line.strip().split("=", 1)
-                    if len(parts) == 2:
-                        os.environ[parts[0].strip()] = parts[1].strip()
+    """Load .env without overriding anything already set in the environment.
+
+    Three bugs lived here: it overwrote real deployment secrets with stale local
+    values, it kept surrounding quotes so KEY="v" became the literal '"v"', and it
+    resolved .env against the current working directory rather than the project.
+    """
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 load_env()
 
@@ -18,18 +27,27 @@ mcp = FastMCP("simulation_engine")
 
 def _get_connection():
     db_path = os.getenv("CLINIC_DB_PATH", "data/clinic.duckdb")
-    return duckdb.connect(db_path)
+    # Read-only: this server only SELECTs, and a read-write handle clashes with
+    # the web app's read-only connection to the same file.
+    return duckdb.connect(db_path, read_only=True)
 
-def _load_baseline(con, clinic_id: str) -> dict:
-    # Query latest average wait, utilization, and no-show rate for this clinic
+def _load_baseline(con, clinic_id: str, start_date: str = "", end_date: str = "") -> dict:
+    """Average wait, utilization and no-show rate for a clinic over a window.
+
+    Without a window this averaged all seven years, so the panel labelled
+    "Baseline (current)" ignored whatever period the user had selected.
+    """
+    window, params = "", [clinic_id]
+    if start_date and end_date:
+        window = " AND date BETWEEN ? AND ?"
+        params += [start_date, end_date]
     row = con.execute("""
         SELECT 
             AVG(CASE WHEN metric_name = 'avg_wait' THEN metric_value END),
             AVG(CASE WHEN metric_name = 'utilization' THEN metric_value END),
             AVG(CASE WHEN metric_name = 'no_show_rate' THEN metric_value END)
         FROM daily_metrics
-        WHERE clinic_id = ?
-    """, (clinic_id,)).fetchone()
+        WHERE clinic_id = ?""" + window, params).fetchone()
     
     # No rows means the clinic id is unknown or has no metrics. Substituting
     # plausible-looking constants here made a projection off invented data

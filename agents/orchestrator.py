@@ -16,17 +16,14 @@ from agents.narrator import narrator_agent
 from agents._audit import audit_log
 from agents._config import MODEL
 
-def before_orchestrator(callback_context):
-    audit_log("orchestrator", "session_started", {"session_id": callback_context.state.get("session_id", "default")})
-    return None
-
 def after_orchestrator(callback_context):
     audit_log("orchestrator", "session_completed", {"session_id": callback_context.state.get("session_id", "default")})
     return None
 
 # Guardrail is wired as before_agent_callback (not a tool) so it CANNOT be skipped:
-# ADK runs it before the model on every invocation. after_orchestrator closes the
-# audit trail for the session (Constitution Rule 6: every action logged).
+# ADK runs it before the model on every invocation, and it audit-logs every verdict,
+# so session starts are already on the record. after_orchestrator closes the session
+# out at the other end (Constitution Rule 6: every action logged).
 root_agent = Agent(
     name="orchestrator",
     model=MODEL,

@@ -3,6 +3,7 @@ import sys
 import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from agents._config import MODEL
 from agents.narrator import narrator_agent, before_narrator, after_narrator
 
 
@@ -13,7 +14,7 @@ class MockState:
 
 def test_agent_configuration():
     assert narrator_agent.name == "narrator"
-    assert narrator_agent.model == "gemini-2.0-flash"
+    assert narrator_agent.model is MODEL   # provider-agnostic: see agents/_config.py
     assert "executive brief narrator" in narrator_agent.instruction
     assert "Retrieve the last 4 briefs" in narrator_agent.instruction
     assert "disclaimer is auto-injected by the report_builder" in narrator_agent.instruction

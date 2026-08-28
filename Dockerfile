@@ -1,3 +1,8 @@
+# Still a floating tag. Pinning by digest is the correct fix and belongs here -
+#   FROM python:3.12-slim@sha256:<digest from `docker buildx imagetools inspect`>
+# - but the digest has to be read from the registry, not guessed, so it is left for
+# a build that can verify it. Python deps are already pinned in pyproject.toml,
+# which is where the outage actually came from.
 FROM python:3.12-slim
 WORKDIR /app
 # README.md is copied because pyproject.toml references it for package metadata.
@@ -6,10 +11,16 @@ RUN pip install --no-cache-dir .
 COPY . .
 # Writable, host-agnostic paths — Hugging Face Spaces / Cloud Run filesystems are ephemeral,
 # and /tmp is always writable regardless of which user the container runs as.
+# CLINIC_AUDIT_DIR can be pointed at a mounted volume to keep the audit trail across restarts.
 ENV CLINIC_DB_PATH=/tmp/clinic.duckdb
 ENV LOG_PATH=/tmp/logs/audit.jsonl
 # Use the Gemini Developer API (AI Studio key), not Vertex AI.
 ENV GOOGLE_GENAI_USE_VERTEXAI=FALSE
+# Drop root: nothing here needs it, and /tmp stays writable for any uid.
+RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
+USER appuser
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD python -c "import urllib.request,os,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.getenv('PORT','8080')+'/health',timeout=4).status==200 else 1)"
 # Seed the synthetic DB into the writable path at startup, then serve. Honors injected $PORT.
 CMD ["sh", "-c", "python data/seed.py && uvicorn web.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

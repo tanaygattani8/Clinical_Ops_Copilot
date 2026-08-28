@@ -4,13 +4,22 @@ from mcp.server.fastmcp import FastMCP
 
 # Minimal .env reader - avoids a dependency just to read five keys.
 def load_env():
-    if os.path.exists(".env"):
-        with open(".env") as f:
-            for line in f:
-                if line.strip() and not line.startswith("#"):
-                    parts = line.strip().split("=", 1)
-                    if len(parts) == 2:
-                        os.environ[parts[0].strip()] = parts[1].strip()
+    """Load .env without overriding anything already set in the environment.
+
+    Three bugs lived here: it overwrote real deployment secrets with stale local
+    values, it kept surrounding quotes so KEY="v" became the literal '"v"', and it
+    resolved .env against the current working directory rather than the project.
+    """
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 load_env()
 
@@ -154,11 +163,14 @@ def appointment_volume(clinic_id: str, start_date: str, end_date: str, group_by:
         
         _enforce_minimum_n(total_count, "appointments")
         
+        # The checked grain must be the returned grain: a passing total said nothing
+        # about a provider group holding a single appointment.
         rows = con.execute(f"""
             SELECT {group_by}, COUNT(*) as count, COUNT(*) * 100.0 / ? as pct
             FROM appointments
             WHERE clinic_id = ? AND date BETWEEN ? AND ?
             GROUP BY {group_by}
+            HAVING COUNT(*) >= 5
         """, (total_count, clinic_id, start_date, end_date)).fetchall()
         
         return {

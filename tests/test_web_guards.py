@@ -91,3 +91,12 @@ def test_audit_log_redacts_free_text():
 
 def test_audit_log_bounds_n():
     assert len(client.get("/api/audit-log?n=100000").json()) <= 200
+
+
+def test_retry_hint_reads_both_minutes_and_seconds():
+    # "1m30.5s" used to yield 60, telling the user to retry 30 seconds early.
+    from web.app import _retry_after_seconds
+    assert _retry_after_seconds("try again in 1m30.5s") == 90
+    assert _retry_after_seconds("try again in 8.5s") == 8
+    assert _retry_after_seconds("try again in 2m") == 120
+    assert _retry_after_seconds("no hint here") is None

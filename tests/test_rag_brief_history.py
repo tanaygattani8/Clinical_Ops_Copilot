@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 os.environ["CLINIC_DB_PATH"] = "data/test_brief_history.duckdb"
 
 from data.seed import create_database
-from rag.brief_history import store_brief, retrieve_latest, retrieve_by_date, search_briefs
+from rag.brief_history import store_brief, retrieve_latest, retrieve_by_date
 
 
 import shutil
@@ -41,6 +41,10 @@ def test_retrieve_nonexistent_date():
     assert r is None
 
 
-def test_search_briefs():
-    results = search_briefs("Content here")
-    assert len(results) >= 1
+def test_retrieve_by_date_is_deterministic_across_clinics():
+    # One row per (date, clinic); LIMIT 1 with no ORDER BY returned an arbitrary one.
+    store_brief("2031-05-05", "brief A", {"clinic": "CLINIC_01"})
+    store_brief("2031-05-05", "brief B", {"clinic": "CLINIC_02"})
+    first = retrieve_by_date("2031-05-05")
+    for _ in range(5):
+        assert retrieve_by_date("2031-05-05")["brief_markdown"] == first["brief_markdown"]

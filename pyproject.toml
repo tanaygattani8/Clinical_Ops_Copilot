@@ -19,6 +19,12 @@ dependencies = [
     "pytest-asyncio>=0.25.0,<2"
 ]
 
+# Without this, setuptools found no packages and `pip install .` installed only
+# dependencies - the "installable package" was nominal and imports worked purely
+# because the app is run from the repo root.
+[tool.setuptools]
+packages = ["agents", "tools", "mcp_servers", "rag", "monitoring", "web", "data"]
+
 [build-system]
 requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"

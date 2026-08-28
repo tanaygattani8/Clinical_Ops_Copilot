@@ -59,3 +59,41 @@ def test_seeded_data():
         # 9. Clean up
         if os.path.exists(test_db):
             os.remove(test_db)
+
+
+def test_appointments_and_daily_metrics_describe_the_same_clinics():
+    """The two tables were generated from different models, so the dashboard and the
+    appointment drill-down reported contradictory facts about the same clinic."""
+    import duckdb, os
+    con = duckdb.connect(os.getenv("CLINIC_DB_PATH", "data/clinic.duckdb"), read_only=True)
+    try:
+        rows = con.execute("""
+            WITH a AS (SELECT clinic_id,
+                              AVG(CASE WHEN status='no_show' THEN 1.0 ELSE 0 END) ns,
+                              AVG(wait_minutes) w
+                       FROM appointments WHERE date BETWEEN '2025-01-01' AND '2025-12-31'
+                       GROUP BY 1),
+                 d AS (SELECT clinic_id,
+                              AVG(CASE WHEN metric_name='no_show_rate' THEN metric_value END) ns,
+                              AVG(CASE WHEN metric_name='avg_wait' THEN metric_value END) w
+                       FROM daily_metrics WHERE date BETWEEN '2025-01-01' AND '2025-12-31'
+                       GROUP BY 1)
+            SELECT a.ns, d.ns, a.w, d.w FROM a JOIN d USING(clinic_id)
+        """).fetchall()
+    finally:
+        con.close()
+    assert rows
+    for a_ns, d_ns, a_w, d_w in rows:
+        assert abs(a_ns - d_ns) < 0.04, f"no-show rates disagree: {a_ns} vs {d_ns}"
+        assert abs(a_w - d_w) < 2.0, f"wait times disagree: {a_w} vs {d_w}"
+
+
+def test_every_clinic_day_clears_the_aggregate_floor():
+    import duckdb, os
+    con = duckdb.connect(os.getenv("CLINIC_DB_PATH", "data/clinic.duckdb"), read_only=True)
+    try:
+        worst = con.execute("SELECT MIN(c) FROM (SELECT COUNT(*) c FROM patient_satisfaction "
+                            "GROUP BY date, clinic_id)").fetchone()[0]
+    finally:
+        con.close()
+    assert worst >= 5, f"a clinic-day held only {worst} survey responses"

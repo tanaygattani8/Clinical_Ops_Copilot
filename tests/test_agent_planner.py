@@ -3,6 +3,7 @@ import sys
 import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from agents._config import MODEL
 from agents.planner import planner_agent, before_planner, after_planner
 
 
@@ -13,7 +14,7 @@ class MockState:
 
 def test_agent_configuration():
     assert planner_agent.name == "planner"
-    assert planner_agent.model == "gemini-2.0-flash"
+    assert planner_agent.model is MODEL   # provider-agnostic: see agents/_config.py
     assert "clinic operations planner" in planner_agent.instruction
     assert "Always label any simulation results as PROJECTED" in planner_agent.instruction
     assert planner_agent.output_key == "planner_output"

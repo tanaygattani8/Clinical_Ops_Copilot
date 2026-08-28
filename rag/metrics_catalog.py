@@ -21,13 +21,3 @@ def lookup_metric(name: str) -> dict:
         if m["name"] == name:
             return m
     return None
-
-
-def get_metrics_by_category(category: str) -> list:
-    """Return all metrics belonging to a category.
-
-    Args:
-        category: Category name (access, efficiency, financial, quality).
-    """
-    catalog = load_metrics_catalog()
-    return [m for m in catalog["metrics"] if m.get("category") == category]

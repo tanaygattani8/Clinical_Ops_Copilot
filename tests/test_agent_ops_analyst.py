@@ -3,6 +3,7 @@ import sys
 import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from agents._config import MODEL
 from agents.ops_analyst import ops_analyst_agent, before_ops_analyst, after_ops_analyst
 
 
@@ -13,7 +14,7 @@ class MockState:
 
 def test_agent_configuration():
     assert ops_analyst_agent.name == "ops_analyst"
-    assert ops_analyst_agent.model == "gemini-2.0-flash"
+    assert ops_analyst_agent.model is MODEL   # provider-agnostic: see agents/_config.py
     assert "clinic operations analyst" in ops_analyst_agent.instruction
     assert ops_analyst_agent.output_key == "analyst_output"
     
