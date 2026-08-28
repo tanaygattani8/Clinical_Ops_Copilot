@@ -23,3 +23,6 @@ docs/card.html
 
 # Local-only working notes
 CHANGES.md
+
+# setuptools build artifacts
+build/

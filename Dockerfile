@@ -5,10 +5,13 @@
 # which is where the outage actually came from.
 FROM python:3.12-slim
 WORKDIR /app
-# README.md is copied because pyproject.toml references it for package metadata.
-COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir .
+# Copy the whole tree BEFORE installing. pyproject.toml now declares real packages,
+# and setuptools cannot find directories that have not been copied yet - installing
+# from pyproject.toml alone failed the build. This costs the dependency-layer cache
+# on every code change, which is the right trade for an install that actually
+# installs the project. README.md is needed here too: pyproject references it.
 COPY . .
+RUN pip install --no-cache-dir .
 # Writable, host-agnostic paths — Hugging Face Spaces / Cloud Run filesystems are ephemeral,
 # and /tmp is always writable regardless of which user the container runs as.
 # CLINIC_AUDIT_DIR can be pointed at a mounted volume to keep the audit trail across restarts.

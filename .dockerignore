@@ -16,3 +16,4 @@ logs/*.jsonl
 *.mp4
 video_assets/
 docs/
+build/
