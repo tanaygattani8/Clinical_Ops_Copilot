@@ -503,8 +503,9 @@ async function sendChat(){
   _startCooldown(); box.scrollTop=box.scrollHeight;
 }
 function add(who,html){
-  const d=document.getElementById('chatDisclaimer');
-  if(d && !d.textContent) d.textContent='⚠ '+DISCLAIMER;const box=document.getElementById('messages');const d=document.createElement('div');d.className='msg '+who;d.innerHTML=html;box.appendChild(d);box.scrollTop=box.scrollHeight;return d;}
+  const disc=document.getElementById('chatDisclaimer');
+  if(disc && !disc.textContent) disc.textContent='⚠ '+DISCLAIMER;
+  const box=document.getElementById('messages');const d=document.createElement('div');d.className='msg '+who;d.innerHTML=html;box.appendChild(d);box.scrollTop=box.scrollHeight;return d;}
 
 async function loadAudit(){
   const rows=await (await fetch('/api/audit-log?n=60')).json();
