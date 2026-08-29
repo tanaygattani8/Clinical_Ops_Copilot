@@ -77,7 +77,11 @@ def _clean_text(body: dict, field: str, max_len: int = 2000) -> str:
 # ── Static frontend ──
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return FileResponse(os.path.join(_STATIC, "index.html"))
+    # no-cache = revalidate against the etag every load, don't skip the request.
+    # The whole app is this one file, so a browser holding a stale copy shows a
+    # frontend that is versions behind the API it is calling.
+    return FileResponse(os.path.join(_STATIC, "index.html"),
+                        headers={"Cache-Control": "no-cache"})
 
 
 # ── Fast SQL endpoints (no LLM) ──
