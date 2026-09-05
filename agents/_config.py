@@ -41,3 +41,30 @@ else:
         model=os.getenv("GROQ_MODEL", "groq/openai/gpt-oss-120b"),
         num_retries=int(os.getenv("LLM_NUM_RETRIES", "3")),
     )
+
+    # gpt-oss is a reasoning model: Groq returns a `reasoning` field, LiteLLM
+    # renames it to `reasoning_content` on the way in, and LiteLLM's Groq
+    # message transform then copies every non-None key back out - so the second
+    # turn of any conversation resends `reasoning_content` and Groq answers
+    # 400 "property 'reasoning_content' is unsupported". It rejects the field
+    # its own model produced. Every tool call creates that second turn, so every
+    # specialist agent failed while a bare greeting worked.
+    #
+    # Stripped here, at the one boundary all four agents share. This reaches into
+    # a third-party internal, so tests/test_agent_config.py asserts the behaviour
+    # and will fail loudly if a litellm upgrade moves it.
+    from litellm.llms.groq.chat.transformation import GroqChatConfig
+
+    _REASONING_KEYS = ("reasoning_content", "reasoning")
+    _groq_transform = GroqChatConfig._transform_messages
+
+    def _drop_reasoning(self, messages, model, is_async=False):
+        for message in messages:
+            get = message.get if isinstance(message, dict) else None
+            if get is None or get("role") != "assistant":
+                continue
+            for key in _REASONING_KEYS:
+                message.pop(key, None)
+        return _groq_transform(self, messages, model, is_async)
+
+    GroqChatConfig._transform_messages = _drop_reasoning
