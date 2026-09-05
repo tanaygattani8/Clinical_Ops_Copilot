@@ -103,27 +103,5 @@ def check_groundedness(narrative: str, kpis: dict, flags: list) -> dict:
     score = 0.0 if total == 0 else round(100 * verified / total, 1)
     return {"score": score, "figures": total, "verified": verified,
             "unverified": unverified[:8]}
-
-
-if __name__ == "__main__":
-    k = {"utilization": 0.807, "no_show_rate": 0.19, "avg_wait": 16.0,
-         "revenue_per_visit": 177.0, "satisfaction": 4.3}
-    fl = [{"issue": "Utilization peaked at 125% (over capacity)"}]
-    good = ("Utilization ran at 80.7% with no-shows at 19.0%, an average wait of "
-            "16.0 minutes, $177 revenue per visit, satisfaction 4.3/5, peaking at 125%.")
-    r_good = check_groundedness(good, k, fl)
-    assert r_good["score"] == 100.0, r_good
-
-    r_bad = check_groundedness(good + " Utilization also hit 200%.", k, fl)
-    assert r_bad["score"] < 100 and "200%" in r_bad["unverified"], r_bad
-
-    # Units must not be interchangeable: every figure below is fabricated, and each
-    # one used to verify against a true value of a completely different kind.
-    swapped = "No-show rate was 16.0% and wait was 4.5 minutes and utilization 177.0%."
-    r_swap = check_groundedness(swapped, k, fl)
-    assert r_swap["verified"] == 0, r_swap
-
-    # Citing nothing is not a pass.
-    assert check_groundedness("Everything looks fine this quarter.", k, fl)["score"] == 0.0
-
-    print("groundedness self-check OK:", r_good, r_bad, r_swap)
+# The runnable check for this module is tests/test_tool_groundedness.py, which
+# already asserts the same four cases (and rounding tolerance) under pytest.

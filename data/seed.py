@@ -70,6 +70,24 @@ def _covid(date):
     return datetime.date(2020, 3, 15) <= date <= datetime.date(2020, 6, 30)
 
 
+def _no_show_and_wait(p, cid, weekday, season, covid):
+    """The day's no-show probability and mean wait for one clinic.
+
+    daily_metrics and appointments must describe the same clinic on the same day.
+    They each had their own copy of this model once, drifted apart, and the
+    dashboard then disagreed with the appointment drill-down by up to 54%.
+    """
+    if cid == "CLINIC_03" and weekday == 0:      # anomaly: Monday no-shows
+        no_show = random.uniform(0.38, 0.42)
+    else:
+        no_show = p["no_show"] + 0.03 * max(0.0, season) + random.uniform(-0.03, 0.03)
+        if covid:
+            no_show += 0.12
+        no_show = _clamp(no_show, 0.04, 0.35)
+    wait = _clamp(p["wait"] + 3 * season + random.uniform(-3, 3), 5, 40)
+    return no_show, wait
+
+
 def create_database(db_path: str) -> None:
     """Creates the DuckDB file and populates all tables with seeded synthetic data."""
     dir_name = os.path.dirname(db_path)
@@ -140,16 +158,8 @@ def _generate_daily_metrics(con) -> None:
                     util *= 0.55
                 util = _clamp(util, 0.35, 1.08)
 
-            # No-show: baseline + winter/weather bump + noise.
-            if cid == "CLINIC_03" and weekday == 0:  # anomaly: Monday no-shows
-                no_show = random.uniform(0.38, 0.42)
-            else:
-                no_show = p["no_show"] + 0.03 * max(0.0, season) + random.uniform(-0.03, 0.03)
-                if covid:
-                    no_show += 0.12
-                no_show = _clamp(no_show, 0.04, 0.35)
-
-            avg_wait = _clamp(p["wait"] + 3 * season + random.uniform(-3, 3), 5, 40)
+            # No-show and wait come from the shared day model (see _no_show_and_wait).
+            no_show, avg_wait = _no_show_and_wait(p, cid, weekday, season, covid)
             rev = p["rev"] * _year_factor(d, 0.04) + random.uniform(-8, 8)
 
             rows.append((d, cid, "utilization", util))
@@ -177,20 +187,10 @@ def _generate_appointments(con) -> None:
             # min 6 keeps every clinic-day an aggregate of 5+ (privacy rule).
             num_appts = max(6, int(random.gauss(base, 2)))
 
-            # Draw status and wait from the SAME model _generate_daily_metrics uses.
-            # These used to be a flat 1-in-6 no-show and a wait that ignored the
-            # clinic profile, so the two tables described different clinics: the
-            # dashboard and the appointment drill-down disagreed by up to 54%,
-            # and the seeded CLINIC_03 anomaly was missing here entirely.
-            if cid == "CLINIC_03" and weekday == 0:      # anomaly: Monday no-shows
-                no_show_p = random.uniform(0.38, 0.42)
-            else:
-                no_show_p = p["no_show"] + 0.03 * max(0.0, season) + random.uniform(-0.03, 0.03)
-                if covid:
-                    no_show_p += 0.12
-                no_show_p = _clamp(no_show_p, 0.04, 0.35)
+            # Status and wait come from the SAME day model daily_metrics uses, so
+            # the two tables cannot describe different clinics.
+            no_show_p, day_wait = _no_show_and_wait(p, cid, weekday, season, covid)
             cancel_p = 0.05
-            day_wait = _clamp(p["wait"] + 3 * season + random.uniform(-3, 3), 5, 40)
 
             for _ in range(num_appts):
                 provider_id = f"PROVIDER_{random.randint(1, 10):02d}"
@@ -215,12 +215,12 @@ def _generate_staffing(con) -> None:
         for cid, p in PROFILES.items():
             size = p["volume"]  # bigger clinics carry more staff
             roles = [
-                ("physician", round(2 * size), 0.0),
-                ("nurse", round(4 * size), 0.0),
-                ("ma", round(3 * size), 0.0),
-                ("admin", max(1, round(2 * size)), 0.0),
+                ("physician", round(2 * size)),
+                ("nurse", round(4 * size)),
+                ("ma", round(3 * size)),
+                ("admin", max(1, round(2 * size))),
             ]
-            for role, base_hc, _ in roles:
+            for role, base_hc in roles:
                 var = random.choice([-1, 0, 1]) if role != "physician" else 0
                 hc = max(1, base_hc + var)
                 staff.append((d, cid, role, hc, float(hc)))

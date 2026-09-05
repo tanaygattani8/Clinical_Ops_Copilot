@@ -26,3 +26,10 @@ CHANGES.md
 
 # setuptools build artifacts
 build/
+
+# Knowledge-graph build output (local artifact, regenerated on demand)
+graphify-out/
+
+# Local-only review reports
+REVIEW_PONYTAIL.md
+CHALLENGE_REPORT.md

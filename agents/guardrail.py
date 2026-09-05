@@ -4,8 +4,10 @@ agents/guardrail.py
 Constitution Rule 1: Guardrail runs first on every request. No exceptions.
 Constitution Rule 2: Block requests for individual patient data.
 
-The guardrail is implemented as a before_model_callback on the root orchestrator.
-It uses keyword matching (no LLM call) for speed and reliability, and logs every
+The guardrail is implemented as a before_agent_callback on the root orchestrator
+(see agents/orchestrator.py) — before the agent runs at all, not merely before
+the model call, so no sub-agent can be reached without passing it. It uses
+keyword matching (no LLM call) for speed and reliability, and logs every
 decision to the audit trail.
 """
 

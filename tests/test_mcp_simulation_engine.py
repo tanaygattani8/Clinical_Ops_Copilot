@@ -58,6 +58,15 @@ def test_more_capacity_shortens_the_wait():
     assert more["daily_capacity"] == 30 and more["horizon_capacity"] == 900
 
 
+def test_removing_staff_raises_the_projected_wait():
+    from mcp_servers.simulation_engine import project_staffing, project_noshow
+    base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.20,
+            "revenue_per_visit": 176.8, "appts_per_day": 18.0}
+    assert project_staffing(base, "physician", -2, 30)["projected_metrics"]["wait_time"] > base["wait_time"]
+    # Fewer no-shows means more billable slots, so the revenue impact is positive.
+    assert project_noshow(base, "sms_reminders", 0.25, 30)["projected_metrics"]["revenue_impact"] > 0
+
+
 def test_role_changes_the_projection():
     from mcp_servers.simulation_engine import project_staffing
     base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.15}
@@ -75,7 +84,32 @@ def test_no_fabricated_confidence_interval_is_published():
 def test_reduction_must_be_a_fraction():
     import pytest
     from mcp_servers.simulation_engine import project_noshow
-    base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.15}
+    base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.15,
+            "revenue_per_visit": 176.8, "appts_per_day": 18.0}
     with pytest.raises(ValueError):
         project_noshow(base, "sms", 15, 30)          # 15 meaning "15%" is ambiguous
     assert project_noshow(base, "sms", 0.15, 30)["label"] == "PROJECTED"
+
+
+def test_revenue_projection_uses_warehouse_numbers_not_constants():
+    """The ROI figure was computed from a hardcoded $150/visit and 15 appts/day
+    while the warehouse it had just queried said ~177 and ~18. Those constants
+    are the whole 'quantify the money' claim, so they have to come from data."""
+    from mcp_servers.simulation_engine import project_noshow
+    base = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.20,
+            "revenue_per_visit": 200.0, "appts_per_day": 20.0}
+    gain = project_noshow(base, "sms", 0.5, 10)["projected_metrics"]["revenue_impact"]
+    # 200 * (0.20 - 0.10) * 20 * 10 == 4000. A constant-driven formula cannot land here.
+    assert gain == 4000.0, gain
+    # Doubling revenue per visit must double the projection.
+    doubled = dict(base, revenue_per_visit=400.0)
+    assert project_noshow(doubled, "sms", 0.5, 10)["projected_metrics"]["revenue_impact"] == 8000.0
+
+
+def test_baseline_without_revenue_keys_is_an_error_not_a_guess():
+    """A hand-built baseline must fail loudly rather than fall back to a constant."""
+    import pytest
+    from mcp_servers.simulation_engine import project_noshow
+    with pytest.raises(KeyError):
+        project_noshow({"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.15},
+                       "sms", 0.15, 30)

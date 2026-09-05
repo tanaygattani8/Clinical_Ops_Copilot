@@ -517,8 +517,7 @@ async function loadAudit(){
 let _simInit=false;
 function loadSimulator(){
   if(_simInit) return; _simInit=true;
-  const csel=document.getElementById('simClinic');
-  for(let c=1;c<=10;c++){ const id=`CLINIC_${String(c).padStart(2,'0')}`; csel.appendChild(new Option(id,id)); }
+  fillClinics(document.getElementById('simClinic'));
   renderSimParams();
 }
 function renderSimParams(){
@@ -569,7 +568,7 @@ function renderSimResults(r){
   const utilAfter = m.utilization!=null ? m.utilization : (m.slot_utilization!=null ? m.slot_utilization : b.utilization);
   let extra='';
   if(r.scenario==='noshow'){
-    extra=`<div class="kpi"><div class="label">Projected revenue impact</div><div class="val">${money(m.revenue_impact)}</div><div class="tag ok">over ${r.projected.projected_metrics ? '30 days' : ''}</div></div>
+    extra=`<div class="kpi"><div class="label">Projected revenue impact</div><div class="val">${money(m.revenue_impact)}</div><div class="tag ok">over 30 days</div></div>
            <div class="kpi"><div class="label">Projected no-show rate</div><div class="val">${pct(m.no_show_rate)}</div><div class="tag ${m.no_show_rate<b.no_show_rate?'ok':'warn'}">was ${pct(b.no_show_rate)}</div></div>`;
   }
   document.getElementById('simResults').innerHTML=`
@@ -594,12 +593,15 @@ function renderSimResults(r){
   bar('cSim',['Baseline','Projected'],[+b.wait_time.toFixed(1),+waitAfter.toFixed(1)],['#94a3b8','#0d9488'],'m');
 }
 
+// The clinic list is the same in the top bar and the simulator; one filler for both.
+function fillClinics(sel,withAll){
+  if(withAll) sel.appendChild(new Option('All clinics','all'));
+  for(let c=1;c<=10;c++){ const id=`CLINIC_${String(c).padStart(2,'0')}`; sel.appendChild(new Option(id,id)); }
+}
 (function(){
   const ysel=document.getElementById('year');
-  for(let y=2025;y>=2019;y--){ const o=document.createElement('option'); o.value=y; o.textContent=y; ysel.appendChild(o); }
-  const csel=document.getElementById('clinic');
-  csel.appendChild(new Option('All clinics','all'));
-  for(let c=1;c<=10;c++){ const id=`CLINIC_${String(c).padStart(2,'0')}`; csel.appendChild(new Option(id,id)); }
+  for(let y=2025;y>=2019;y--) ysel.appendChild(new Option(y,y));
+  fillClinics(document.getElementById('clinic'),true);
 })();
 applyPreset();  // sync From/To to the default preset (Full year 2025), then load
 </script>

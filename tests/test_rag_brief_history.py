@@ -4,7 +4,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 os.environ["CLINIC_DB_PATH"] = "data/test_brief_history.duckdb"
 
-from data.seed import create_database
 from rag.brief_history import store_brief, retrieve_latest, retrieve_by_date
 
 

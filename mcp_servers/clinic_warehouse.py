@@ -48,13 +48,18 @@ def query_metric(metric_name: str, clinic_id: str, start_date: str, end_date: st
     """
     con = _get_connection()
     try:
-        # Count daily metrics records in this date range
+        # Rule 2 protects people, not rows. daily_metrics holds one row per
+        # clinic/date/metric, so counting it measured how many metric names exist:
+        # one clinic on one day gave 4 and was refused for "privacy", while all ten
+        # clinics that same day gave 40 and passed - the gate fired in inverse
+        # proportion to the actual re-identification risk. Count the patient-grain
+        # table the metrics are derived from instead.
         count = con.execute("""
-            SELECT COUNT(*) FROM daily_metrics
-            WHERE clinic_id = ? AND metric_name = ? AND date BETWEEN ? AND ?
-        """, (clinic_id, metric_name, start_date, end_date)).fetchone()[0]
-        
-        _enforce_minimum_n(count, "daily metric records")
+            SELECT COUNT(*) FROM appointments
+            WHERE clinic_id = ? AND date BETWEEN ? AND ?
+        """, (clinic_id, start_date, end_date)).fetchone()[0]
+
+        _enforce_minimum_n(count, "appointments")
         
         rows = con.execute("""
             SELECT date, metric_value FROM daily_metrics
@@ -81,6 +86,9 @@ def compare_clinics(metric_name: str, clinic_ids: list[str], date: str) -> dict:
         clinic_ids: List of clinic IDs.
         date: Specific date (YYYY-MM-DD).
     """
+    # An LLM fills this list; an empty one produced a raw "IN ()" SQL parse error.
+    if not clinic_ids:
+        raise ValueError("clinic_ids must name at least one clinic.")
     con = _get_connection()
     try:
         # Verify that each clinic has enough appointments on that date to be an aggregate of 5+
@@ -231,12 +239,12 @@ def brief_metrics(clinic_id: str, start_date: str, end_date: str) -> dict:
     con = _get_connection()
     try:
         # Rule 2 applies to the brief's own input, so a window too small to be an
-        # aggregate never reaches a narrative.
-        # Known limit: counts rows, not distinct entities - same grain the other tools use.
+        # aggregate never reaches a narrative. Counted over appointments, not
+        # daily_metrics - see query_metric for why the metrics grain was wrong.
         count = con.execute(
-            "SELECT COUNT(*) FROM daily_metrics WHERE date BETWEEN ? AND ?" + cf,
+            "SELECT COUNT(*) FROM appointments WHERE date BETWEEN ? AND ?" + cf,
             [start_date, end_date] + cp).fetchone()[0]
-        _enforce_minimum_n(count, "daily metric records")
+        _enforce_minimum_n(count, "appointments")
 
         def avg_metric(name):
             r = con.execute(
@@ -277,9 +285,4 @@ def brief_metrics(clinic_id: str, start_date: str, end_date: str) -> dict:
         con.close()
 
 if __name__ == "__main__":
-    import sys
-    # Support stdio or sse mode
-    if len(sys.argv) > 1 and sys.argv[1] == "sse":
-        mcp.run(transport="sse", host="0.0.0.0", port=8081)
-    else:
-        mcp.run(transport="stdio")
+    mcp.run(transport="stdio")

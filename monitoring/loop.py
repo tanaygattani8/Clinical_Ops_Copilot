@@ -1,9 +1,7 @@
 import os
 import asyncio
 import duckdb
-from agents.orchestrator import root_agent
-from google.adk.runners import InMemoryRunner
-from google.genai import types
+from agents.orchestrator import run_agent
 from agents._audit import audit_log
 from rag.brief_history import store_brief
 
@@ -15,49 +13,27 @@ def _get_connection():
 
 async def _trigger_agent_run(query: str) -> str:
     """Send a query to the orchestrator agent and get the text response."""
-    runner = InMemoryRunner(agent=root_agent)
-    # ADK's run_async does not auto-create sessions; create it first.
-    await runner.session_service.create_session(
-        app_name=runner.app_name, user_id="system_monitor", session_id="monitor_session"
-    )
-    user_msg = types.Content(role="user", parts=[types.Part(text=query)])
-
-    # Run the orchestrator
-    response_text = ""
-    async for event in runner.run_async(
-        user_id="system_monitor",
-        session_id="monitor_session",
-        new_message=user_msg
-    ):
-        if event.content and event.content.parts:
-            for part in event.content.parts:
-                if hasattr(part, "text") and part.text:
-                    response_text += part.text
-    return response_text
+    return await run_agent(query, "monitor_session", "system_monitor")
 
 async def run_daily_brief(force: bool = False, target_date: str = None) -> dict:
     """Check for utilization anomalies and run the agent brief pipeline if found or forced."""
-    con = _get_connection()
     try:
-        # Determine the target date to scan (default to latest date in DB)
-        if not target_date:
-            latest_row = con.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
-            if latest_row and latest_row[0]:
-                target_date = str(latest_row[0])
-            else:
-                target_date = "2025-06-28"  # Fallback
-        
-        # 1. Query clinic_warehouse directly (no LLM, zero API calls)
-        # Check utilization > 110% (1.10)
-        anomalies = con.execute("""
-            SELECT clinic_id, metric_value FROM daily_metrics
-            WHERE date = ? AND metric_name = 'utilization' AND metric_value > 1.10
-        """, (target_date,)).fetchall()
-        
-        con.close()
+        # `with` closes the handle on every exit path. The old form closed it by
+        # hand and then again in the except clause, where a failure to *open* the
+        # database left `con` unbound and raised NameError over the real error.
+        with _get_connection() as con:
+            # Determine the target date to scan (default to latest date in DB)
+            if not target_date:
+                latest_row = con.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
+                target_date = str(latest_row[0]) if latest_row and latest_row[0] else "2025-06-28"
+
+            # 1. Query clinic_warehouse directly (no LLM, zero API calls)
+            # Check utilization > 110% (1.10)
+            anomalies = con.execute("""
+                SELECT clinic_id, metric_value FROM daily_metrics
+                WHERE date = ? AND metric_name = 'utilization' AND metric_value > 1.10
+            """, (target_date,)).fetchall()
     except Exception as e:
-        if con:
-            con.close()
         # A failed scan is a monitoring failure and has to leave a trace; returning
         # it as data meant start_scheduler dropped it and slept for another day.
         audit_log("monitoring_loop", "monitor_scan_failed", {"error": str(e), "date": target_date})

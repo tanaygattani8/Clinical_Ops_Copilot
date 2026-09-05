@@ -43,7 +43,11 @@ def store_brief(date: str, brief_markdown: str, metadata: dict) -> None:
             (date, clinic))
         con.execute(
             "INSERT INTO brief_history VALUES (?, ?, ?, ?)",
-            (date, brief_markdown, json.dumps(metadata), datetime.datetime.utcnow())
+            # Naive UTC on purpose: created_at is a plain TIMESTAMP, and DuckDB
+            # converts an aware value to *local* time on the way in, which would
+            # order new rows hours behind the ones already stored.
+            (date, brief_markdown, json.dumps(metadata),
+             datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None))
         )
     finally:
         con.close()

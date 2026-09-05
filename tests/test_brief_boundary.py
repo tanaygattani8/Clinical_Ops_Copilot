@@ -36,10 +36,17 @@ def test_non_date_is_refused():
 
 
 def test_window_too_small_hits_minimum_n():
-    # One clinic-day is 4 metric rows, below the 5-record floor.
-    res = _post(start="2025-01-01", end="2025-01-01", clinic="CLINIC_01")
+    # Rule 2 counts people. A window covering no appointments is refused...
+    res = _post(start="1990-01-01", end="1990-01-02", clinic="CLINIC_01")
     assert res.status_code == 400
     assert "minimum of 5" in res.json()["error"]
+
+
+def test_a_single_clinic_day_is_not_a_privacy_risk():
+    # ...but one clinic on one real day covers a whole day of patients and must
+    # not be. The gate used to count metric rows, of which there are 4 per
+    # clinic-day, so it refused the narrowest query while allowing the widest.
+    assert _post(start="2025-01-01", end="2025-01-01", clinic="CLINIC_01").status_code == 200
 
 
 def test_trace_names_only_components_that_ran():

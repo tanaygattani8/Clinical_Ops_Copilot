@@ -47,7 +47,27 @@ def test_staffing_snapshot():
     assert "staff" in res
     assert len(res["staff"]) >= 1
 
+def test_compare_clinics_rejects_an_empty_list():
+    # Empty produced a raw "IN ()" SQL parse error instead of a usable message.
+    with pytest.raises(ValueError, match="at least one clinic"):
+        compare_clinics("avg_wait", [], "2025-06-15")
+
+
 def test_aggregate_guardrail_violation():
-    # If we query a range that has fewer than 5 records, it should raise ValueError
+    # A range covering fewer than 5 appointments cannot be returned as an aggregate.
     with pytest.raises(ValueError, match="Insufficient data"):
-        query_metric("no_show_rate", "CLINIC_01", "2025-01-01", "2025-01-04")
+        query_metric("no_show_rate", "CLINIC_01", "1990-01-01", "1990-01-04")
+
+
+def test_minimum_n_counts_people_not_metric_rows():
+    """The Rule 2 gate counted daily_metrics rows, which is one per clinic/date/
+    metric. One clinic on one day gave 4 and was refused as a privacy risk, while
+    all ten clinics that same day gave 40 and passed - the refusal fired in
+    inverse proportion to the real risk, and it 400'd the dashboard."""
+    from mcp_servers import clinic_warehouse as w
+    one_day = w.brief_metrics("CLINIC_01", "2025-01-01", "2025-01-01")
+    assert one_day["kpis"]["utilization"] is not None
+    # The gate must still fire on a window that genuinely covers too few people.
+    import pytest
+    with pytest.raises(ValueError, match="appointments"):
+        w.brief_metrics("CLINIC_01", "1990-01-01", "1990-01-02")

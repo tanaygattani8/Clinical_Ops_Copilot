@@ -22,7 +22,14 @@ def resolve_date_range(reference: str, anchor_date: str = "") -> dict:
         reference: Natural-language time expression (e.g. 'last week', 'Q2 2025', 'past 30 days').
         anchor_date: Optional anchor date in YYYY-MM-DD format (defaults to today).
     """
-    anchor = _anchor(anchor_date)
+    try:
+        anchor = _anchor(anchor_date)
+    except ValueError:
+        # An LLM supplies this argument, so a malformed one has to come back as an
+        # error dict like every other bad input - it used to raise out of the tool.
+        return {"reference": reference, "start_date": None, "end_date": None,
+                "anchor": anchor_date,
+                "error": f"Invalid anchor_date '{anchor_date}'; expected YYYY-MM-DD."}
     ref = reference.strip().lower()
 
     try:
@@ -103,7 +110,7 @@ def get_comparison_periods(reference: str, anchor_date: str = "") -> dict:
         last_of_prev = first_of_curr - datetime.timedelta(days=1)
         first_of_prev = last_of_prev.replace(day=1)
         prev_start, prev_end = first_of_prev, last_of_prev
-    elif "q" in ref and len(ref) >= 2 and ref[0] == 'q' and ref[1].isdigit():
+    elif ref[:1] == "q" and ref[1:2].isdigit():
         year = curr_start.year
         month = curr_start.month
         if month == 4:

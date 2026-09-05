@@ -38,6 +38,24 @@ def test_satisfaction_categories_below_the_floor_are_withheld():
     assert all(r["n"] >= MIN_GROUP_N for r in rows)
 
 
+def test_dashboard_reads_through_the_warehouse_minimum_n_gate():
+    """The dashboard used to carry its own copy of the brief's KPI/flag SQL, with no
+    Rule 2 gate. It now reads the same warehouse tool the brief does."""
+    ok = client.get("/api/dashboard?start=2025-01-01&end=2025-03-31&clinic=all")
+    assert ok.status_code == 200
+    body = ok.json()
+    assert set(body["kpis"]) == {"utilization", "no_show_rate", "avg_wait",
+                                 "revenue_per_visit", "satisfaction"}
+    assert all(f["severity"] in ("high", "medium") for f in body["flags"])
+    # Sharing the gate must not mean inheriting a broken one: a single clinic-day
+    # is a legitimate dashboard view and used to 400 with a privacy error.
+    assert client.get("/api/dashboard?start=2025-01-01&end=2025-01-01&clinic=CLINIC_01").status_code == 200
+    # A window covering no patients is still refused.
+    too_small = client.get("/api/dashboard?start=1990-01-01&end=1990-01-02&clinic=CLINIC_01")
+    assert too_small.status_code == 400
+    assert "minimum of 5" in too_small.json()["error"]
+
+
 # ── Malformed input is a 400, never a 500 ──
 
 def test_malformed_json_is_rejected_cleanly():

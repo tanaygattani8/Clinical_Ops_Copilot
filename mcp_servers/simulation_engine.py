@@ -42,22 +42,36 @@ def _load_baseline(con, clinic_id: str, start_date: str = "", end_date: str = ""
         window = " AND date BETWEEN ? AND ?"
         params += [start_date, end_date]
     row = con.execute("""
-        SELECT 
+        SELECT
             AVG(CASE WHEN metric_name = 'avg_wait' THEN metric_value END),
             AVG(CASE WHEN metric_name = 'utilization' THEN metric_value END),
-            AVG(CASE WHEN metric_name = 'no_show_rate' THEN metric_value END)
+            AVG(CASE WHEN metric_name = 'no_show_rate' THEN metric_value END),
+            AVG(CASE WHEN metric_name = 'revenue_per_visit' THEN metric_value END)
         FROM daily_metrics
         WHERE clinic_id = ?""" + window, params).fetchone()
-    
+
     # No rows means the clinic id is unknown or has no metrics. Substituting
     # plausible-looking constants here made a projection off invented data
     # indistinguishable from a real one - and `or` also swallowed a genuine 0.0.
     if row is None or row[0] is None:
         raise ValueError(f"No metrics found for clinic '{clinic_id}'; cannot project from an empty baseline.")
+
+    # Appointments per day comes from the appointments table because no metric
+    # records it. The revenue projection needs both this and revenue_per_visit;
+    # they used to be hardcoded as 15 and 150.0 while this same warehouse said
+    # ~18 and ~177, which made the one number the ROI pitch rests on invented.
+    volume = con.execute("""
+        SELECT COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT date), 0) FROM appointments
+        WHERE clinic_id = ?""" + window, params).fetchone()[0]
+    if volume is None:
+        raise ValueError(f"No appointments found for clinic '{clinic_id}'; cannot project revenue.")
+
     return {
         "wait_time": row[0],
         "utilization": row[1],
-        "no_show_rate": row[2]
+        "no_show_rate": row[2],
+        "revenue_per_visit": row[3],
+        "appts_per_day": volume,
     }
 
 # Roles do not move the queue equally: a physician adds appointment capacity
@@ -124,7 +138,13 @@ def project_noshow(baseline: dict, intervention: str, expected_reduction_pct: fl
             f"(got {expected_reduction_pct}; use 0.15 for 15%)")
     # Reducing no-shows reduces the no-show rate, increases slot utilization, and increases revenue
     proj_no_show = max(0.01, baseline["no_show_rate"] * (1.0 - expected_reduction_pct))
-    revenue_gain = 150.0 * (baseline["no_show_rate"] - proj_no_show) * 15 * horizon_days
+    # Revenue per visit and appointments per day come from the warehouse via
+    # _load_baseline. Indexed, not .get() with a default: a missing key means the
+    # caller built the baseline by hand, and a made-up constant here is exactly
+    # the fabricated figure this project exists to catch.
+    revenue_gain = (baseline["revenue_per_visit"]
+                    * (baseline["no_show_rate"] - proj_no_show)
+                    * baseline["appts_per_day"] * horizon_days)
     proj_util = min(1.0, baseline["utilization"] * (1.0 + expected_reduction_pct * 0.1))
 
     return {
@@ -188,33 +208,6 @@ def simulate_noshow_intervention(clinic_id: str, intervention: str, expected_red
     finally:
         con.close()
 
-def _selfcheck():
-    baseline = {"wait_time": 20.0, "utilization": 0.85, "no_show_rate": 0.20}
-
-    staff_up = project_staffing(baseline, "physician", 2, 30)
-    assert staff_up["label"] == "PROJECTED"
-    assert staff_up["projected_metrics"]["wait_time"] < baseline["wait_time"], "adding staff should lower projected wait"
-
-    staff_down = project_staffing(baseline, "physician", -2, 30)
-    assert staff_down["projected_metrics"]["wait_time"] > baseline["wait_time"], "removing staff should raise projected wait"
-
-    sched = project_schedule(baseline, 15, 30, 30)
-    assert sched["label"] == "PROJECTED"
-    assert sched["projected_metrics"]["daily_capacity"] == 30
-    assert sched["projected_metrics"]["horizon_capacity"] == 30 * 30
-
-    noshow = project_noshow(baseline, "sms_reminders", 0.25, 30)
-    assert noshow["label"] == "PROJECTED"
-    assert noshow["projected_metrics"]["no_show_rate"] < baseline["no_show_rate"], "intervention should lower projected no-show rate"
-    assert noshow["projected_metrics"]["revenue_impact"] > 0, "reducing no-shows should project positive revenue impact"
-
-    print("OK")
-
+# The projection math's runnable check is tests/test_mcp_simulation_engine.py.
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "sse":
-        mcp.run(transport="sse", host="0.0.0.0", port=8082)
-    elif len(sys.argv) > 1 and sys.argv[1] == "selfcheck":
-        _selfcheck()
-    else:
-        mcp.run(transport="stdio")
+    mcp.run(transport="stdio")

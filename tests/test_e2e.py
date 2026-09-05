@@ -14,8 +14,6 @@ It mocks the LLM layer to confirm that:
 
 import os
 import sys
-import json
-import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 os.environ["CLINIC_DB_PATH"] = "data/clinic.duckdb"

@@ -28,6 +28,13 @@ def test_invalid_reference_no_exception():
     assert res["start_date"] is None
 
 
+def test_invalid_anchor_date_is_an_error_not_an_exception():
+    # The anchor is parsed before the try block, so a bad one raised out of the tool.
+    res = resolve_date_range("last week", "not-a-date")
+    assert res["start_date"] is None and "anchor_date" in res["error"]
+    assert get_comparison_periods("last week", "not-a-date")["current"]["start_date"] is None
+
+
 def test_relative_dates_land_inside_the_warehouse_range():
     # Anchoring to the real today returns an empty window the warehouse then
     # reports as a privacy refusal, which is a confusing answer to a data gap.

@@ -4,15 +4,14 @@ import time
 import duckdb
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
-from agents.orchestrator import root_agent
+from agents.orchestrator import run_agent
+from agents.narrator import narrator_agent
 from agents._audit import audit_log, read_audit_log
 from agents.guardrail import guardrail_check
 from tools.groundedness import check_groundedness
 from tools.output_validator import validate_all
 from rag.brief_history import retrieve_latest, retrieve_by_date, store_brief
 from mcp_servers import clinic_warehouse, simulation_engine
-from google.adk.runners import InMemoryRunner
-from google.genai import types
 
 app = FastAPI(title="Clinic Operations Copilot")
 
@@ -85,57 +84,16 @@ async def index():
 
 
 # ── Fast SQL endpoints (no LLM) ──
-def _clinic_clause(clinic):
-    """Returns (sql_fragment, params) — empty when 'all'/blank so all clinics aggregate."""
-    return (" AND clinic_id = ?", [clinic]) if clinic not in ("all", "", None) else ("", [])
-
-
 @app.get("/api/dashboard")
 async def dashboard(start: str = _DEFAULT_START, end: str = _DEFAULT_END, clinic: str = "all"):
-    con = _con()
-    cf, cp = _clinic_clause(clinic)
+    # Same KPIs and anomaly thresholds the brief uses, so read them from the one
+    # place that defines them. A second copy of this SQL here meant the dashboard
+    # and the brief could drift apart on what counts as "over capacity", and the
+    # dashboard copy had no Rule 2 minimum-n gate.
     try:
-        def avg_metric(name):
-            r = con.execute(
-                "SELECT AVG(metric_value) FROM daily_metrics "
-                "WHERE metric_name = ? AND date BETWEEN ? AND ?" + cf,
-                [name, start, end] + cp).fetchone()[0]
-            return round(r, 4) if r is not None else None
-
-        sat = con.execute(
-            "SELECT AVG(score) FROM patient_satisfaction WHERE date BETWEEN ? AND ?" + cf,
-            [start, end] + cp).fetchone()[0]
-
-        kpis = {
-            "utilization": avg_metric("utilization"),
-            "no_show_rate": avg_metric("no_show_rate"),
-            "avg_wait": avg_metric("avg_wait"),
-            "revenue_per_visit": avg_metric("revenue_per_visit"),
-            "satisfaction": round(sat, 4) if sat is not None else None,
-        }
-
-        # Anomaly flags: over-capacity utilization and high no-show (scoped to clinic if set).
-        flags = []
-        util = con.execute(
-            "SELECT clinic_id, MAX(metric_value) FROM daily_metrics "
-            "WHERE metric_name='utilization' AND date BETWEEN ? AND ?" + cf +
-            " GROUP BY clinic_id HAVING MAX(metric_value) > 1.10 ORDER BY clinic_id",
-            [start, end] + cp).fetchall()
-        for cid, mx in util:
-            flags.append({"clinic": cid, "severity": "high",
-                          "issue": f"Utilization peaked at {mx*100:.0f}% (over capacity)"})
-        nos = con.execute(
-            "SELECT clinic_id, MAX(metric_value) FROM daily_metrics "
-            "WHERE metric_name='no_show_rate' AND date BETWEEN ? AND ?" + cf +
-            " GROUP BY clinic_id HAVING MAX(metric_value) > 0.30 ORDER BY clinic_id",
-            [start, end] + cp).fetchall()
-        for cid, mx in nos:
-            flags.append({"clinic": cid, "severity": "medium",
-                          "issue": f"No-show rate reached {mx*100:.0f}%"})
-
-        return JSONResponse({"start": start, "end": end, "clinic": clinic, "kpis": kpis, "flags": flags})
-    finally:
-        con.close()
+        return JSONResponse(clinic_warehouse.brief_metrics(clinic, start, end))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @app.get("/api/metric/by-clinic")
@@ -155,7 +113,8 @@ async def metric_by_clinic(metric: str = "utilization", start: str = _DEFAULT_ST
 async def metric_trend(metric: str = "utilization", start: str = _DEFAULT_START,
                        end: str = _DEFAULT_END, clinic: str = "all"):
     con = _con()
-    cf, cp = _clinic_clause(clinic)
+    # Blank/"all" means every clinic aggregated, so the filter simply drops out.
+    cf, cp = (" AND clinic_id = ?", [clinic]) if clinic not in ("all", "", None) else ("", [])
     try:
         rows = con.execute(
             "SELECT date_trunc('week', date) AS wk, AVG(metric_value) FROM daily_metrics "
@@ -245,21 +204,6 @@ async def simulate(request: Request):
 
 
 # ── Agent-powered endpoints ──
-async def _run_agent(prompt: str, session_id: str, user_id: str) -> str:
-    runner = InMemoryRunner(agent=root_agent)
-    await runner.session_service.create_session(
-        app_name=runner.app_name, user_id=user_id, session_id=session_id
-    )
-    msg = types.Content(role="user", parts=[types.Part(text=prompt)])
-    text = ""
-    async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=msg):
-        if event.content and event.content.parts:
-            for part in event.content.parts:
-                if getattr(part, "text", None):
-                    text += part.text
-    return text
-
-
 def _retry_after_seconds(detail: str):
     """Pull the wait hint out of a Groq 429 body ('try again in 8.5s' / 'retry after 12')."""
     m = re.search(r"(?:try again in|retry[- ]after[\"':\s]*)\s*"
@@ -319,7 +263,7 @@ async def chat(request: Request):
              "session_id": session_id, "disclaimer": DISCLAIMER}, status_code=429)
     audit_log("web", "chat_request", {"message_snippet": message[:120], "session_id": session_id})
     try:
-        response_text = await _run_agent(message, session_id, "web_user")
+        response_text = await run_agent(message, session_id, "web_user")
         if not response_text.strip():
             response_text = "I couldn't produce a response for that. Try rephrasing, or ask about a specific clinic/metric/period."
     except Exception as e:
@@ -408,10 +352,17 @@ async def generate_brief(request: Request):
 
     # Never 500 on an LLM hiccup: fall back to a deterministic narrative so a brief always renders + saves.
     try:
-        narrative = await _run_agent(prompt, f"brief_{start}_{end}_{clinic}", "brief_generator")
+        # The narrator directly, not the orchestrator: the figures were already
+        # fetched and validated above, so routing this through root_agent only
+        # risked a fan-out to specialists that would re-fetch them - against a
+        # token budget the brief path exists to stay inside. This is also what
+        # makes the trace below honest: it names the narrator, so the narrator
+        # is what runs.
+        narrative = await run_agent(prompt, f"brief_{start}_{end}_{clinic}",
+                                    "brief_generator", agent=narrator_agent)
         if not narrative.strip():
             raise ValueError("empty narrative")
-        source = f"Groq ({os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')})"
+        source = f"Groq ({os.getenv('GROQ_MODEL', 'groq/openai/gpt-oss-120b')})"
     except Exception:
         narrative = _fallback_narrative(start, end, data)
         source = "deterministic fallback (LLM unavailable)"

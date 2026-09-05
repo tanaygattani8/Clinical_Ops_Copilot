@@ -16,22 +16,14 @@ from mcp.client.stdio import StdioServerParameters
 from tools.output_validator import validate_all
 from rag.brief_history import store_brief, retrieve_latest
 from agents._audit import audit_log
-from agents._config import MODEL
+from agents._config import MODEL, MCP_PYTHON, MCP_DIR
 
-# Determine absolute path for python.exe inside the virtual environment (.venv)
-_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-_venv_python = os.path.join(_base_dir, ".venv", "Scripts", "python.exe")
-if not os.path.exists(_venv_python):
-    _venv_python = "python"
-
-_report_script = os.path.join(_base_dir, "mcp_servers", "report_builder.py")
-
-# Stdio connection parameters for report_builder MCP server
+# Stdio connection parameters for report_builder MCP server (no warehouse access)
 report_toolset = McpToolset(
     connection_params=StdioConnectionParams(
         server_params=StdioServerParameters(
-            command=_venv_python,
-            args=[_report_script]
+            command=MCP_PYTHON,
+            args=[os.path.join(MCP_DIR, "report_builder.py")]
         )
     )
 )

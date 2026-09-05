@@ -1,4 +1,4 @@
-import os
+import datetime
 from mcp.server.fastmcp import FastMCP
 
 DISCLAIMER = (
@@ -55,7 +55,6 @@ def build_executive_brief(title: str, date: str, sections: list, disclaimer: str
         sections: List of section dicts returned by build_metric_section.
         disclaimer: Optional extra disclaimer text (auto-injected if empty).
     """
-    import datetime
     body_parts = [f"# {title}", f"**Date:** {date}", ""]
     for s in sections:
         md = s.get("section_markdown", "")
@@ -80,7 +79,7 @@ def build_executive_brief(title: str, date: str, sections: list, disclaimer: str
         "brief_markdown": brief_md,
         "brief_html": brief_html,
         "metadata": {
-            "generated_at": datetime.datetime.utcnow().isoformat(),
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "section_count": len(sections)
         }
     }
@@ -115,8 +114,4 @@ def build_comparison_table(title: str, rows: list, columns: list) -> dict:
 
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "sse":
-        mcp.run(transport="sse", host="0.0.0.0", port=8083)
-    else:
-        mcp.run(transport="stdio")
+    mcp.run(transport="stdio")

@@ -22,7 +22,9 @@ def audit_log(agent_name: str, action: str, details: dict) -> None:
         details: Arbitrary JSON-serialisable dict with context.
     """
     entry = {
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        # utcnow() is deprecated and returns a naive value the "Z" only claimed to
+        # describe; now(timezone.utc) is genuinely UTC and says so in the string.
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "agent": agent_name,
         "action": action,
         "details": details

@@ -14,24 +14,15 @@ from mcp.client.stdio import StdioServerParameters
 from tools.calculator import calculate, percentage_change, rate_per_unit
 from tools.date_resolver import resolve_date_range, get_comparison_periods
 from agents._audit import audit_log
-from agents._config import MODEL
-
-# Determine absolute path for python.exe inside the virtual environment (.venv)
-_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-_venv_python = os.path.join(_base_dir, ".venv", "Scripts", "python.exe")
-if not os.path.exists(_venv_python):
-    _venv_python = "python"
-
-_simulation_script = os.path.join(_base_dir, "mcp_servers", "simulation_engine.py")
-_db_path = os.getenv("CLINIC_DB_PATH", os.path.join(_base_dir, "data", "clinic.duckdb"))
+from agents._config import MODEL, MCP_PYTHON, MCP_DIR, DB_PATH
 
 # Stdio connection parameters for simulation_engine MCP server
 simulation_toolset = McpToolset(
     connection_params=StdioConnectionParams(
         server_params=StdioServerParameters(
-            command=_venv_python,
-            args=[_simulation_script],
-            env={"CLINIC_DB_PATH": _db_path}
+            command=MCP_PYTHON,
+            args=[os.path.join(MCP_DIR, "simulation_engine.py")],
+            env={"CLINIC_DB_PATH": DB_PATH}
         )
     )
 )
