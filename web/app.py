@@ -363,7 +363,15 @@ async def generate_brief(request: Request):
         if not narrative.strip():
             raise ValueError("empty narrative")
         source = f"Groq ({os.getenv('GROQ_MODEL', 'groq/openai/gpt-oss-120b')})"
-    except Exception:
+    except Exception as e:
+        # Record WHY before degrading. This swallowed the exception silently, so a
+        # brief served entirely by the fallback looked identical whether the model
+        # was deprecated, the key was wrong, or a tool subprocess died - and the
+        # only way to tell from outside was that it never said "Groq". The brief
+        # still renders (never 500); the cause now reaches the audit trail.
+        audit_log("web", "brief_llm_failed",
+                  {"clinic": clinic, "error_type": type(e).__name__,
+                   "error": str(e)[:300]})
         narrative = _fallback_narrative(start, end, data)
         source = "deterministic fallback (LLM unavailable)"
 

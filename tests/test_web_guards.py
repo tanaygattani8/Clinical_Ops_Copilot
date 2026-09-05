@@ -118,3 +118,25 @@ def test_retry_hint_reads_both_minutes_and_seconds():
     assert _retry_after_seconds("try again in 8.5s") == 8
     assert _retry_after_seconds("try again in 2m") == 120
     assert _retry_after_seconds("no hint here") is None
+
+
+def test_brief_llm_failure_is_recorded_not_swallowed(monkeypatch):
+    """A brief served by the fallback used to look identical whether the model was
+    deprecated, the key was wrong, or a tool subprocess died. The cause has to
+    reach the audit trail, or the next outage is undiagnosable from outside."""
+    import web.app as appmod
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("simulated provider failure")
+
+    logged = []
+    monkeypatch.setattr(appmod, "run_agent", _boom)
+    monkeypatch.setattr(appmod, "audit_log",
+                        lambda agent, action, details: logged.append((action, details)))
+    res = client.post("/api/generate-brief",
+                      json={"start": "2025-01-01", "end": "2025-03-31", "clinic": "all"})
+    # Never 500: the brief still renders from the deterministic fallback.
+    assert res.status_code == 200
+    failures = [d for a, d in logged if a == "brief_llm_failed"]
+    assert failures, f"no brief_llm_failed entry in {[a for a, _ in logged]}"
+    assert failures[0]["error_type"] == "RuntimeError"
