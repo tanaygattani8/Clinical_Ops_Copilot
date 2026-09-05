@@ -73,6 +73,12 @@ async def run_agent(prompt: str, session_id: str, user_id: str, agent=None) -> s
     text = ""
     async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=msg):
         for part in (event.content.parts if event.content and event.content.parts else []):
+            # Skip the model's private reasoning. gpt-oss is a reasoning model and
+            # ADK surfaces its scratchpad as a text part flagged `thought`, so
+            # concatenating every part put "The user says hello. According to
+            # developer instructions..." in front of the actual answer on screen.
+            if getattr(part, "thought", False):
+                continue
             if getattr(part, "text", None):
                 text += part.text
     return text

@@ -2,6 +2,8 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import pytest
+
 from agents._config import MODEL
 from agents.orchestrator import root_agent, after_orchestrator
 
@@ -41,3 +43,38 @@ def test_orchestrator_callbacks():
     # Cleanup
     if os.path.exists(log_path):
         os.remove(log_path)
+
+
+@pytest.mark.asyncio
+async def test_reasoning_parts_are_not_shown_to_the_user(monkeypatch):
+    """gpt-oss is a reasoning model and ADK surfaces its scratchpad as a text part
+    flagged `thought`. Concatenating every part printed the model's private
+    deliberation in front of its answer on the live site."""
+    import agents.orchestrator as orch
+
+    class _Part:
+        def __init__(self, text, thought=False):
+            self.text, self.thought = text, thought
+
+    class _Event:
+        def __init__(self, parts):
+            self.content = type("C", (), {"parts": parts})()
+
+    class _FakeRunner:
+        app_name = "test"
+
+        def __init__(self, agent=None):
+            self.session_service = type("S", (), {
+                "create_session": staticmethod(lambda **kw: _noop())})()
+
+        async def run_async(self, **kwargs):
+            yield _Event([_Part("The user says hello. I should answer.", thought=True),
+                          _Part("Hello! How can I help with clinic operations?")])
+
+    async def _noop():
+        return None
+
+    monkeypatch.setattr(orch, "InMemoryRunner", _FakeRunner)
+    out = await orch.run_agent("hi", "s1", "u1")
+    assert out == "Hello! How can I help with clinic operations?"
+    assert "I should answer" not in out
