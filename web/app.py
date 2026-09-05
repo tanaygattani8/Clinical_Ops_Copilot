@@ -233,7 +233,10 @@ def _explain_llm_error(e: Exception) -> str:
         wait = _retry_after_seconds(detail)
         when = f"about {wait} second{'s' if wait != 1 else ''}" if wait else "roughly 30 seconds"
         return (
-            f"⏳ Rate limit reached on the free Groq tier (12,000 tokens/minute). "
+            # No hardcoded ceiling here: 12,000 TPM was llama-3.3-70b's limit and
+            # did not survive the migration. Groq's own retry hint below is the
+            # number that is actually true at the time it is shown.
+            f"⏳ Rate limit reached on the free Groq tier. "
             f"Each question runs several agents, so a fast back-and-forth can hit the cap. "
             f"Please wait {when} and send it again — the dashboard, simulator and briefs "
             f"keep working in the meantime."
